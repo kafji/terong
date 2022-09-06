@@ -1,10 +1,10 @@
 use crate::protocol::message::{InputEvent, Message};
+use crossbeam::channel::{Receiver, TryRecvError};
 use log::{debug, info};
 use std::{
     convert::TryInto,
     io::{self, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    sync::mpsc::{Receiver, TryRecvError},
 };
 
 pub fn run(event_source: Receiver<InputEvent>, stop_signal: Receiver<()>) {

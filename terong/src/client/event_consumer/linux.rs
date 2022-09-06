@@ -1,6 +1,6 @@
 use crate::protocol::message::InputEvent;
-use std::sync::mpsc::Receiver;
+use crossbeam::channel::Receiver;
 
-pub fn run(source: Receiver<InputEvent>) {
+pub fn run(event_source: Receiver<InputEvent>, stop_signal: Receiver<()>) {
     todo!()
 }

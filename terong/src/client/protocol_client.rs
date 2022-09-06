@@ -64,8 +64,8 @@ mod client {
 use self::client::Client;
 use crate::protocol::message::{InputEvent, Message};
 use anyhow::Error;
+use crossbeam::channel::{Receiver, Sender, TryRecvError};
 use log::{debug, info};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 pub fn run(event_sink: Sender<InputEvent>, stop_signal: Receiver<()>) {
     let addr = "192.168.123.31:5000"
