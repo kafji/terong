@@ -49,8 +49,8 @@ fn run_server(server: &mut Server) -> Result<(), anyhow::Error> {
             let m = bincode::serialize(&event)?;
             for (stream, peer_addr) in &mut server.clients {
                 println!("sending input event to {}", peer_addr);
-                stream.write(&(m.len() as u16).to_be_bytes())?;
-                stream.write(&m)?;
+                stream.write_all(&(m.len() as u16).to_be_bytes())?;
+                stream.write_all(&m)?;
             }
         }
     }
