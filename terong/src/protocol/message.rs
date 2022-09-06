@@ -1,14 +1,25 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum Message {
+    InputEvent(InputEvent),
+}
+
+impl From<InputEvent> for Message {
+    fn from(x: InputEvent) -> Self {
+        Self::InputEvent(x)
+    }
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub enum InputEvent {
     MouseMove { dx: i32, dy: i32 },
     MouseButtonDown { button: MouseButton },
     MouseButtonUp { button: MouseButton },
-    MouseScroll { direction: ScrollDirection },
+    MouseScroll {},
 
-    KeyDown { key: KeyboardKey },
-    KeyUp { key: KeyboardKey },
+    KeyDown { key: Key },
+    KeyUp { key: Key },
 }
 
 #[repr(u8)]
@@ -21,16 +32,10 @@ pub enum MouseButton {
     Mouse5,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
-pub enum ScrollDirection {
-    Up = 0,
-    Down,
-}
-
+/// Keyboard key.
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
-pub enum KeyboardKey {
+pub enum Key {
     Escape = 0,
 
     // function keys
@@ -63,6 +68,7 @@ pub enum KeyboardKey {
 
     Minus,
     Plus,
+
     Backspace,
 
     A,
@@ -93,20 +99,39 @@ pub enum KeyboardKey {
     Z,
 
     Tab,
+
     CapsLock,
+
     LeftShift,
-    LeftCtrl,
-    LeftAlt,
-    LeftSys,
-    Space,
-    RightSys,
-    RightAlt,
-    RightCtrl,
     RightShift,
+
+    LeftCtrl,
+    RightCtrl,
+
+    LeftAlt,
+    RightAlt,
+
+    LeftSys,
+    RightSys,
+
+    Space,
+
     Enter,
+
+    Insert,
+    Delete,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
 }
 
-impl KeyboardKey {
+impl Key {
     pub unsafe fn from_u32(n: u32) -> Self {
         assert!(n < Self::Enter as u32 + 1);
         std::mem::transmute(n)
@@ -120,8 +145,8 @@ mod tests {
     #[test]
     fn test() {
         unsafe {
-            let k = KeyboardKey::from_u32(81);
-            assert_eq!(k, KeyboardKey::B);
+            let k = Key::from_u32(81);
+            assert_eq!(k, Key::B);
         }
     }
 }

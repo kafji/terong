@@ -1,5 +1,6 @@
-use crate::protocol::message::{InputEvent, KeyboardKey};
-use std::sync::mpsc::Sender;
+use crate::protocol::message::{InputEvent, Key};
+use log::{debug, warn};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use windows::Win32::{
     Foundation::{GetLastError, BOOL, LPARAM, LRESULT, WPARAM},
     System::{
@@ -22,7 +23,7 @@ impl Drop for Unhooker {
     }
 }
 
-pub fn run(sink: Sender<InputEvent>) {
+pub fn run(event_sink: Sender<InputEvent>, stop_signal: Receiver<()>) {
     if {
         let b: bool = unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), true) }.into();
         !b
@@ -52,17 +53,24 @@ pub fn run(sink: Sender<InputEvent>) {
                 panic!("{:?}", error);
             }
             0 => {
-                println!("quitting");
+                debug!("quitting");
                 break;
             }
             _ => match msg.message {
                 WM_APP => {
                     let ptr_event = msg.lParam.0 as *mut InputEvent;
                     let event = *unsafe { Box::from_raw(ptr_event) };
-                    sink.send(event).unwrap();
+                    event_sink.send(event).unwrap();
                 }
-                _ => (),
+                _ => {
+                    warn!("unhandled message {:?}", msg);
+                }
             },
+        }
+        match stop_signal.try_recv() {
+            Ok(_) => break,
+            Err(TryRecvError::Empty) => (),
+            Err(err) => panic!("{}", err),
         }
     }
 }
@@ -80,6 +88,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         let ptr = lparam.0 as *const MSLLHOOKSTRUCT;
         &*ptr
     };
+    debug!("received mouse hook event {:?}", hook_event);
     match wparam.0 as u32 {
         WM_MOUSEMOVE => {
             // dbg!(hook);
@@ -95,15 +104,11 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
         let ptr = lparam.0 as *const KBDLLHOOKSTRUCT;
         &*ptr
     };
+    debug!("received keyboard hook event {:?}", hook_event);
+    let key = VkCode(hook_event.vkCode).into();
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN => InputEvent::KeyDown {
-            key: VkCode(hook_event.vkCode).into(),
-        }
-        .into(),
-        WM_KEYUP => InputEvent::KeyUp {
-            key: VkCode(hook_event.vkCode).into(),
-        }
-        .into(),
+        WM_KEYDOWN => InputEvent::KeyDown { key }.into(),
+        WM_KEYUP => InputEvent::KeyUp { key }.into(),
         _ => None,
     };
     if let Some(event) = event {
@@ -121,13 +126,13 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
 
 struct VkCode(u32);
 
-impl Into<KeyboardKey> for VkCode {
-    fn into(self) -> KeyboardKey {
+impl Into<Key> for VkCode {
+    fn into(self) -> Key {
         let vk_code = self.0;
         // https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
         match vk_code {
             0x41..=0x5A => {
-                let key_a = KeyboardKey::A as u32;
+                let key_a = Key::A as u32;
                 let key = if key_a < 0x41 {
                     let d = 0x41 - key_a;
                     vk_code - d
@@ -135,7 +140,7 @@ impl Into<KeyboardKey> for VkCode {
                     let d = key_a - 0x41;
                     vk_code + d
                 };
-                unsafe { KeyboardKey::from_u32(key) }
+                unsafe { Key::from_u32(key) }
             }
             _ => todo!(),
         }
