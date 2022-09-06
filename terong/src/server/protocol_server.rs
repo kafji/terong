@@ -25,7 +25,7 @@ impl Server {
 }
 
 fn run_server(server: &mut Server) -> Result<(), anyhow::Error> {
-    let listener = TcpListener::bind("127.0.0.1:5000")?;
+    let listener = TcpListener::bind("0.0.0.0:5000")?;
     listener.set_nonblocking(true)?;
 
     loop {
