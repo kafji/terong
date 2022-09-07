@@ -1,6 +1,6 @@
-use crate::protocol::message::{InputEvent, Key};
+use crate::event::{InputEvent, Key};
+use crossbeam::channel::{Receiver, Sender, TryRecvError};
 use log::{debug, warn};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use windows::Win32::{
     Foundation::{GetLastError, BOOL, LPARAM, LRESULT, WPARAM},
     System::{
@@ -68,7 +68,10 @@ pub fn run(event_sink: Sender<InputEvent>, stop_signal: Receiver<()>) {
             },
         }
         match stop_signal.try_recv() {
-            Ok(_) => break,
+            Ok(_) => {
+                debug!("received stop signal");
+                break;
+            }
             Err(TryRecvError::Empty) => (),
             Err(err) => panic!("{}", err),
         }

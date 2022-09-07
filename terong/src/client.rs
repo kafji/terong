@@ -3,10 +3,10 @@ mod protocol_client;
 
 use crossbeam::channel;
 use log::debug;
-use std::{convert::identity, thread};
+use std::{convert::identity, path::PathBuf, thread};
 
 /// Run the client application.
-pub fn run() {
+pub fn run(config_file: Option<PathBuf>) {
     debug!("starting client");
 
     let (stop_tx, stop_rx) = channel::bounded(0);

@@ -1,17 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum Message {
-    InputEvent(InputEvent),
-}
-
-impl From<InputEvent> for Message {
-    fn from(x: InputEvent) -> Self {
-        Self::InputEvent(x)
-    }
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum InputEvent {
     MouseMove { dx: i32, dy: i32 },
     MouseButtonDown { button: MouseButton },
@@ -23,7 +12,7 @@ pub enum InputEvent {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum MouseButton {
     Left = 0,
     Right,
@@ -133,20 +122,7 @@ pub enum Key {
 
 impl Key {
     pub unsafe fn from_u32(n: u32) -> Self {
-        assert!(n < Self::Enter as u32 + 1);
+        assert!(n < Self::ArrowRight as u32 + 1);
         std::mem::transmute(n)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test() {
-        unsafe {
-            let k = Key::from_u32(81);
-            assert_eq!(k, Key::B);
-        }
     }
 }
