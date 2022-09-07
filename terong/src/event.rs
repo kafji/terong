@@ -2,13 +2,19 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum InputEvent {
-    MouseMove { dx: i32, dy: i32 },
+    MousePosition(MousePosition),
     MouseButtonDown { button: MouseButton },
     MouseButtonUp { button: MouseButton },
     MouseScroll {},
 
-    KeyDown { key: Key },
-    KeyUp { key: Key },
+    KeyDown { key: KeyCode },
+    KeyUp { key: KeyCode },
+}
+
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+pub struct MousePosition {
+    pub x: i32,
+    pub y: i32,
 }
 
 #[repr(u8)]
@@ -22,9 +28,9 @@ pub enum MouseButton {
 }
 
 /// Keyboard key.
-#[repr(u32)]
+#[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
-pub enum Key {
+pub enum KeyCode {
     Escape = 0,
 
     // function keys
@@ -100,8 +106,8 @@ pub enum Key {
     LeftAlt,
     RightAlt,
 
-    LeftSys,
-    RightSys,
+    LeftMeta,
+    RightMeta,
 
     Space,
 
@@ -120,9 +126,8 @@ pub enum Key {
     ArrowRight,
 }
 
-impl Key {
-    pub unsafe fn from_u32(n: u32) -> Self {
-        assert!(n < Self::ArrowRight as u32 + 1);
+impl KeyCode {
+    pub unsafe fn from_u16(n: u16) -> Self {
         std::mem::transmute(n)
     }
 }

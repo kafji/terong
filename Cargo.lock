@@ -494,6 +494,7 @@ dependencies = [
  "evdev-rs",
  "log",
  "native-tls",
+ "once_cell",
  "serde",
  "toml",
  "windows",

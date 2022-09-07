@@ -1,4 +1,4 @@
-mod event_consumer;
+mod input_event_consumer;
 mod protocol_client;
 
 use crossbeam::channel;
@@ -11,6 +11,7 @@ pub fn run(config_file: Option<PathBuf>) {
 
     let (stop_tx, stop_rx) = channel::bounded(0);
 
+    let (input_event_tx, input_event_rx) = channel::unbounded();
     let (event_tx, event_rx) = channel::unbounded();
 
     thread::scope(|s| {
@@ -24,7 +25,7 @@ pub fn run(config_file: Option<PathBuf>) {
         let consumer = thread::Builder::new()
             .name("event-consumer".to_owned())
             .spawn_scoped(s, || {
-                event_consumer::run(event_rx, stop_rx.clone());
+                input_event_consumer::run(input_event_rx, stop_rx.clone());
             })
             .expect("failed to create thread for event consumer");
 
@@ -35,7 +36,6 @@ pub fn run(config_file: Option<PathBuf>) {
             if finished {
                 break;
             }
-            thread::yield_now();
         }
 
         debug!("stopping server");

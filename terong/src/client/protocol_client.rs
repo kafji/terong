@@ -1,5 +1,5 @@
 mod client {
-    use crate::{event::InputEvent, protocol::ServerMessage};
+    use crate::protocol::{Event, ServerMessage};
     use anyhow::Error;
     use bytes::{Buf, BufMut, BytesMut};
     use crossbeam::channel::Sender;
@@ -21,12 +21,12 @@ mod client {
         state: State,
         stream: TcpStream,
         buffer: BytesMut,
-        event_sink: Sender<InputEvent>,
+        event_sink: Sender<Event>,
     }
 
     impl Client {
         /// Establish connection to the server.
-        pub fn connect(addr: SocketAddr, event_sink: Sender<InputEvent>) -> Result<Self, Error> {
+        pub fn connect(addr: SocketAddr, event_sink: Sender<Event>) -> Result<Self, Error> {
             let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
 
             let s = Self {
@@ -84,7 +84,7 @@ mod client {
                 }
                 State::ReadMsg { msg } => {
                     match msg {
-                        ServerMessage::InputEvent(x) => {
+                        ServerMessage::Event(x) => {
                             self.event_sink.send(*x)?;
                         }
                         _ => todo!(),
@@ -98,12 +98,12 @@ mod client {
 }
 
 use self::client::Client;
-use crate::event::InputEvent;
+use crate::protocol::Event;
 use anyhow::Error;
 use crossbeam::channel::{Receiver, Sender, TryRecvError};
 use log::{debug, info};
 
-pub fn run(event_sink: Sender<InputEvent>, stop_signal: Receiver<()>) {
+pub fn run(event_sink: Sender<Event>, stop_signal: Receiver<()>) {
     let addr = "192.168.123.31:5000"
         .parse()
         .expect("server address was invalid");

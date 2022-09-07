@@ -1,4 +1,6 @@
-use crate::{event::InputEvent, protocol::ServerMessage};
+//! The TCP server that will transmits events to clients.
+
+use crate::protocol::{Event, ServerMessage};
 use anyhow::Error;
 use crossbeam::channel::{Receiver, TryRecvError};
 use log::{debug, info};
@@ -8,18 +10,19 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream},
 };
 
-pub fn run(event_source: Receiver<InputEvent>, stop_signal: Receiver<()>) {
+/// Run the server.
+pub fn run(event_source: Receiver<Event>, stop_signal: Receiver<()>) {
     let mut server = Server::new(event_source);
     run_server(&mut server, &stop_signal).unwrap();
 }
 
 struct Server {
     clients: Vec<(TcpStream, SocketAddr)>,
-    event_source: Receiver<InputEvent>,
+    event_source: Receiver<Event>,
 }
 
 impl Server {
-    fn new(event_source: Receiver<InputEvent>) -> Self {
+    fn new(event_source: Receiver<Event>) -> Self {
         Self {
             clients: Vec::new(),
             event_source,

@@ -13,3 +13,8 @@ cfg_if! {
         pub use self::windows::run;
     }
 }
+
+#[derive(Debug)]
+pub enum Signal {
+    SetShouldCapture(bool),
+}
