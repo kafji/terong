@@ -69,18 +69,11 @@ pub async fn run(config_file: Option<PathBuf>) {
     info!("server stopped");
 }
 
-#[derive(Debug)]
-enum State {
-    // shouldn't capture & propagate user inputs
-    Inactive,
-    // should capture & porpagate user inputs to the specified client
-    Active { client_id: u8 },
-}
-
 /// Application environment.
 #[derive(Debug)]
 struct Inner {
-    state: State,
+    /// 0 for local (server)
+    active_computer: u8,
     /// Denotes if the input event listener should capture user inputs.
     ///
     /// The input event listener should still listen and propagate user inputs regardless of this value.
@@ -111,7 +104,7 @@ pub struct App {
 impl App {
     pub fn new(should_capture_input_tx: watch::Sender<bool>) -> Self {
         let inner = Inner {
-            state: State::Inactive,
+            active_computer: 0,
             should_capture_input_tx,
             mouse_pos_buf: VecDeque::new(),
         };
@@ -167,7 +160,7 @@ impl App {
 
                 if found_first_bump && pos.x < 1 {
                     app.set_should_capture_input(true);
-                    app.state = State::Active { client_id: 0 };
+                    app.active_computer = 1;
                 }
 
                 app.mouse_pos_buf.push_back((pos, Instant::now()));
