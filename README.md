@@ -1,5 +1,9 @@
 # Terong
 
-## Limitations
+[KVM switch software](https://en.wikipedia.org/wiki/KVM_switch) alternative.
 
-- Can only have 1 client.
+## Goals
+
+- Server on Windows.
+- Client(s) on Linux.
+- Bang cursor twice to switch.

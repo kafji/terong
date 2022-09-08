@@ -20,6 +20,6 @@ pub struct MousePosition {
 
 impl MousePosition {
     pub fn delta_to(&self, other: Self) -> (i32, i32) {
-        todo!()
+        (0, 0)
     }
 }

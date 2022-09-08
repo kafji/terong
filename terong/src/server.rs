@@ -41,7 +41,7 @@ pub async fn run(config_file: Option<PathBuf>) {
             x = listener_event_source.recv() => {
                 match x {
                     Some(event) => {
-                        app.handle_event(event).await;
+                        app.handle_input_event(event).await;
                         let pe = app.local_event_to_protocol_event(event);
                         server_event_sink.send(pe).unwrap();
                     }
@@ -69,17 +69,38 @@ pub async fn run(config_file: Option<PathBuf>) {
     info!("server stopped");
 }
 
+#[derive(Debug)]
+enum State {
+    // shouldn't capture & propagate user inputs
+    Inactive,
+    // should capture & porpagate user inputs to the specified client
+    Active { client_id: u8 },
+}
+
 /// Application environment.
 #[derive(Debug)]
 struct Inner {
+    state: State,
     /// Denotes if the input event listener should capture user inputs.
     ///
     /// The input event listener should still listen and propagate user inputs regardless of this value.
-    capture_input_tx: watch::Sender<bool>,
+    should_capture_input_tx: watch::Sender<bool>,
     /// Buffer of mouse positions.
     ///
     /// Must be guaranteed to be sorted ascendingly by time.
     mouse_pos_buf: VecDeque<(MousePosition, Instant)>,
+}
+
+impl Inner {
+    fn set_should_capture_input(&self, b: bool) {
+        self.should_capture_input_tx.send_if_modified(|x| {
+            if *x == b {
+                return false;
+            }
+            *x = b;
+            true
+        });
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -88,9 +109,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(capture_input_tx: watch::Sender<bool>) -> Self {
+    pub fn new(should_capture_input_tx: watch::Sender<bool>) -> Self {
         let inner = Inner {
-            capture_input_tx,
+            state: State::Inactive,
+            should_capture_input_tx,
             mouse_pos_buf: VecDeque::new(),
         };
         let inner = Arc::new(Mutex::new(inner));
@@ -111,7 +133,9 @@ impl App {
         }
     }
 
-    pub async fn handle_event(&mut self, event: LocalInputEvent) {
+    pub async fn handle_input_event(&mut self, event: LocalInputEvent) {
+        debug!("handling {:?}", event);
+
         self.drop_expired_events();
 
         let mut app = self.inner.lock().unwrap();
@@ -142,13 +166,8 @@ impl App {
                 };
 
                 if found_first_bump && pos.x < 1 {
-                    app.capture_input_tx.send_if_modified(|x| {
-                        if *x == true {
-                            return false;
-                        }
-                        *x = true;
-                        true
-                    });
+                    app.set_should_capture_input(true);
+                    app.state = State::Active { client_id: 0 };
                 }
 
                 app.mouse_pos_buf.push_back((pos, Instant::now()));

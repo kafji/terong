@@ -31,7 +31,6 @@ impl Server {
     }
 
     async fn send_input_event(&mut self, event: InputEvent) -> Result<(), Error> {
-        debug!("sending input event");
         let msg: ServerMessage = event.into();
         let msg = bincode::serialize(&msg)?;
         let msg_len = msg.len();
