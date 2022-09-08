@@ -1,76 +1,71 @@
 //! The TCP server that will transmits events to clients.
 
-use crate::protocol::{Event, ServerMessage};
+use crate::protocol::{InputEvent, ServerMessage};
 use anyhow::Error;
-use crossbeam::channel::{Receiver, TryRecvError};
-use log::{debug, info};
-use std::{
-    convert::TryInto,
-    io::{self, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
+use std::{convert::TryInto, net::SocketAddr};
+use tokio::{
+    io::AsyncWriteExt,
+    net::{TcpListener, TcpStream},
+    select,
+    sync::mpsc,
 };
+use tracing::{debug, info};
 
 /// Run the server.
-pub fn run(event_source: Receiver<Event>, stop_signal: Receiver<()>) {
+pub async fn run(event_source: mpsc::UnboundedReceiver<InputEvent>) {
     let mut server = Server::new(event_source);
-    run_server(&mut server, &stop_signal).unwrap();
+    run_server(&mut server).await.unwrap();
 }
 
 struct Server {
     clients: Vec<(TcpStream, SocketAddr)>,
-    event_source: Receiver<Event>,
+    event_source: mpsc::UnboundedReceiver<InputEvent>,
 }
 
 impl Server {
-    fn new(event_source: Receiver<Event>) -> Self {
+    fn new(event_source: mpsc::UnboundedReceiver<InputEvent>) -> Self {
         Self {
             clients: Vec::new(),
             event_source,
         }
     }
+
+    async fn send_input_event(&mut self, event: InputEvent) -> Result<(), Error> {
+        debug!("sending input event");
+        let msg: ServerMessage = event.into();
+        let msg = bincode::serialize(&msg)?;
+        let msg_len = msg.len();
+        for (stream, addr) in &mut self.clients {
+            debug!("sending message {:?} length {} to {}", msg, msg_len, addr);
+            stream.write_all(&msg_len.to_be_bytes()).await?;
+            stream.write_all(&msg).await?;
+        }
+        Ok(())
+    }
 }
 
-fn run_server(server: &mut Server, stop_signal: &Receiver<()>) -> Result<(), Error> {
+async fn run_server(server: &mut Server) -> Result<(), Error> {
     let addr = "0.0.0.0:5000";
+
     info!("listening at {}", addr);
-    let listener = TcpListener::bind(addr)?;
-    listener.set_nonblocking(true)?;
+
+    let listener = TcpListener::bind(addr).await?;
 
     loop {
-        match stop_signal.try_recv() {
-            Ok(_) => {
-                debug!("received stop signal");
-                break;
+        select! {
+            // accept incoming connections
+            conn = listener.accept() => {
+                let (stream, addr) = conn?;
+                info!("received connection from {}", addr);
+                server.clients.push((stream, addr));
             }
-            Err(TryRecvError::Empty) => (),
-            Err(err) => return Err(err.into()),
-        }
-
-        let conn = match listener.accept() {
-            Ok(x) => Some(x),
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => None,
-            Err(err) => Err(err)?,
-        };
-        if let Some((stream, addr)) = conn {
-            info!("received connection from {}", addr);
-            server.clients.push((stream, addr));
-        }
-
-        let event = match server.event_source.try_recv() {
-            Ok(x) => Some(x),
-            Err(TryRecvError::Empty) => None,
-            Err(err) => Err(err)?,
-        };
-        if let Some(event) = event {
-            let msg: ServerMessage = event.into();
-            let msg_len: u16 = {
-                let len = bincode::serialized_size(&msg)?;
-                len.try_into()?
-            };
-            for (stream, addr) in &mut server.clients {
-                debug!("sending message {:?} length {} to {}", msg, msg_len, addr);
-                stream.write_all(&msg_len.to_be_bytes())?;
-                bincode::serialize_into(stream, &msg)?;
+            // send input events to connected clients
+            x = server.event_source.recv() => {
+                if let Some(event) = x {
+                    server.send_input_event(event).await?;
+                } else {
+                    break;
+                }
             }
         }
     }

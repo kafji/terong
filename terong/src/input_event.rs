@@ -2,19 +2,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum InputEvent {
-    MousePosition(MousePosition),
+    MouseMove { dx: i32, dy: i32 },
+
     MouseButtonDown { button: MouseButton },
     MouseButtonUp { button: MouseButton },
     MouseScroll {},
 
     KeyDown { key: KeyCode },
     KeyUp { key: KeyCode },
-}
-
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
-pub struct MousePosition {
-    pub x: i32,
-    pub y: i32,
 }
 
 #[repr(u8)]

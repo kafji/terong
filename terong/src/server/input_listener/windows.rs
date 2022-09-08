@@ -1,22 +1,33 @@
-use crate::{
-    event::{InputEvent, KeyCode, MouseButton, MousePosition},
-    server::input_listener::Signal,
+use super::event::{LocalInputEvent, MousePosition};
+use crate::input_event::{KeyCode, MouseButton};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
 };
-use crossbeam::channel::{Receiver, Sender, TryRecvError};
-use log::{debug, warn};
-use once_cell::sync::OnceCell;
+use tokio::{
+    select,
+    sync::{
+        mpsc::{self, UnboundedSender},
+        watch,
+    },
+};
+use tracing::{debug, warn};
 use windows::Win32::{
-    Foundation::{BOOL, LPARAM, LRESULT, WPARAM},
+    Foundation::{GetLastError, BOOL, LPARAM, LRESULT, WPARAM},
     System::{
         Console::{SetConsoleCtrlHandler, CTRL_C_EVENT},
         LibraryLoader::GetModuleHandleW,
-        Threading::{ExitProcess, GetCurrentThreadId},
+        Threading::ExitProcess,
     },
-    UI::WindowsAndMessaging::{
-        CallNextHookEx, PeekMessageW, PostMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-        HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PM_REMOVE, WH_KEYBOARD_LL,
-        WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-        WM_QUIT,
+    UI::{
+        Input::KeyboardAndMouse::{
+            VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_SPACE,
+        },
+        WindowsAndMessaging::{
+            CallNextHookEx, GetMessageW, PostMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+            HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL,
+            WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_QUIT,
+        },
     },
 };
 
@@ -27,48 +38,58 @@ struct Unhooker(HHOOK);
 
 impl Drop for Unhooker {
     fn drop(&mut self) {
-        unsafe { UnhookWindowsHookEx(self.0) };
+        let ok: bool = unsafe { UnhookWindowsHookEx(self.0) }.into();
+        if !ok {
+            let err = unsafe { GetLastError() };
+            panic!("{:?}", err);
+        }
     }
 }
 
-/// Message queue thread id.
-///
-/// This is the thread id where the message queue and hook procedures are executed.
-static MQ_THREAD_ID: OnceCell<u32> = OnceCell::new();
-
-/// Assert current thread is the message queue thread.
-macro_rules! assert_in_mq_thread {
-    () => {
-        let current_thread_id = unsafe { GetCurrentThreadId() };
-        let mq_thread_id = *MQ_THREAD_ID.get().expect("mq thread id is unset");
-        assert!(current_thread_id == mq_thread_id);
-    };
-}
-
-const WM_APP_INPUT_EVENT: u32 = WM_APP;
-
-/// Run the Windows input event listener.
-///
-/// This function must not be called more than once.
-pub fn run(
-    event_sink: Sender<InputEvent>,
-    signal_source: Receiver<Signal>,
-    stop_signal_source: Receiver<()>,
+pub async fn run(
+    event_sink: mpsc::UnboundedSender<LocalInputEvent>,
+    mut capture_input_flag_source: watch::Receiver<bool>,
 ) {
-    // set mq thread id
-    let thread_id = unsafe { GetCurrentThreadId() };
-    MQ_THREAD_ID
-        .set(thread_id)
-        .expect("mq thread id already set");
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-    // set ctrl+c trap
-    if {
-        let b: bool = unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), true) }.into();
-        !b
-    } {
-        panic!("failed to set ctrl handler");
+    let listener = thread::spawn(move || run_listener(event_tx));
+
+    loop {
+        select! {
+            _ = event_sink.closed() => {
+                break;
+            }
+            _ = capture_input_flag_source.changed() => {
+                let flag = *capture_input_flag_source.borrow();
+                debug!("setting should capture flag to {}", flag);
+                set_should_capture_flag(flag);
+            }
+            x = event_rx.recv() => {
+                match x {
+                    Some(event) => {
+                        if let Err(_) = event_sink.send(event) {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+
+            }
+        }
     }
 
+    drop(event_rx);
+
+    listener.join().unwrap();
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum MessageCode {
+    InputEvent = WM_APP,
+}
+
+fn run_listener(event_sink: mpsc::UnboundedSender<LocalInputEvent>) {
     // get module handle for this application
     let module = unsafe { GetModuleHandleW(None) }.unwrap();
     assert!(!module.is_invalid());
@@ -86,85 +107,54 @@ pub fn run(
     );
 
     loop {
-        // handle stop signal
-        match stop_signal_source.try_recv() {
-            Ok(_) => {
-                debug!("received stop signal");
-                break;
-            }
-            Err(TryRecvError::Empty) => (),
-            Err(TryRecvError::Disconnected) => {
-                debug!("stop signal channel was disconnected");
-                // channel disconnected. app terminating? exiting loop.
-                break;
-            }
-        }
-
-        // handle general signal
-        match signal_source.try_recv() {
-            Ok(signal) => {
-                debug!("received signal {:?}", signal);
-                match signal {
-                    Signal::SetShouldCapture(should_capture) => set_should_capture(should_capture),
-                }
-            }
-            Err(TryRecvError::Empty) => (),
-            Err(TryRecvError::Disconnected) => {
-                debug!("signal channel was disconnected");
-                // channel disconnected. app terminating? exiting loop.
-                break;
-            }
-        }
-
         // process message
         let mut msg = MSG::default();
-        let has_msg = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE) }.into();
-        if has_msg {
-            match msg.message {
-                WM_QUIT => {
-                    debug!("received quit message");
-                    break;
-                }
-                WM_APP_INPUT_EVENT => {
-                    // get pointer to input event from lparam
-                    let ptr_event = msg.lParam.0 as *mut InputEvent;
-                    // acquire input event, the box will ensure it will be freed
-                    let event = *unsafe { Box::from_raw(ptr_event) };
-                    // propagate input event to the sink
-                    event_sink.send(event).unwrap();
-                }
-                _ => {
-                    warn!("unhandled message {:?}", msg);
+        // blocking wait for message
+        let ok = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+        match ok.0 {
+            -1 => {
+                let err = unsafe { GetLastError() };
+                panic!("{:?}", err);
+            }
+            0 => {
+                debug!("received quit message");
+                break;
+            }
+            _ => {
+                match msg.message {
+                    WM_QUIT => {
+                        debug!("received quit message");
+                        break;
+                    }
+                    n if n == MessageCode::InputEvent as _ => {
+                        // get pointer to input event from lparam
+                        let ptr_event = msg.lParam.0 as *mut LocalInputEvent;
+                        // acquire input event, the box will ensure it will be freed
+                        let event = *unsafe { Box::from_raw(ptr_event) };
+                        // propagate input event to the sink
+                        if let Err(_) = event_sink.send(event) {
+                            debug!("event sink was closed");
+                            break;
+                        }
+                    }
+                    _ => {
+                        warn!("unhandled message {:?}", msg);
+                    }
                 }
             }
         }
-    }
-}
-
-/// Procedure for ctrl+c trap.
-extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
-    match ctrl_type {
-        CTRL_C_EVENT => {
-            debug!("received ctrl+c event, exiting process");
-            unsafe { ExitProcess(0) }
-        }
-        _ => BOOL(0),
     }
 }
 
 /// If the hooks should capture user inputs.
-static mut SHOULD_CAPTURE: bool = false;
+static SHOULD_CAPTURE: AtomicBool = AtomicBool::new(false);
 
-/// Get the should capture flag safely.
 fn should_capture() -> bool {
-    assert_in_mq_thread!();
-    unsafe { SHOULD_CAPTURE }
+    SHOULD_CAPTURE.load(Ordering::Relaxed)
 }
 
-/// Safely set the should capture flag value.
-fn set_should_capture(x: bool) {
-    assert_in_mq_thread!();
-    unsafe { SHOULD_CAPTURE = x }
+fn set_should_capture_flag(x: bool) {
+    SHOULD_CAPTURE.store(x, Ordering::Relaxed)
 }
 
 /// Procedure for low level mouse hook.
@@ -176,38 +166,35 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
     let ptr_hook_event = lparam.0 as *const MSLLHOOKSTRUCT;
     let hook_event = unsafe { *ptr_hook_event };
 
-    debug!("received mouse event {:?}", hook_event);
+    // debug!("received mouse hook event {:?}", hook_event);
 
     // map hook event to input event
     let event = match wparam.0 as u32 {
         WM_MOUSEMOVE => {
             let x = hook_event.pt.x;
             let y = hook_event.pt.y;
-            InputEvent::MousePosition(MousePosition { x, y }).into()
+            LocalInputEvent::MousePosition(MousePosition { x, y }).into()
         }
-        WM_LBUTTONDOWN => InputEvent::MouseButtonDown {
+        WM_LBUTTONDOWN => LocalInputEvent::MouseButtonDown {
             button: MouseButton::Left,
         }
         .into(),
-        WM_LBUTTONUP => InputEvent::MouseButtonUp {
+        WM_LBUTTONUP => LocalInputEvent::MouseButtonUp {
             button: MouseButton::Left,
         }
         .into(),
-        _ => {
-            debug!("unhandled mouse event {:?}", hook_event);
-            None
-        }
+        _ => None,
     };
 
     // send input event in a message to the mq
     if let Some(event) = event {
         let event = Box::new(event);
-        let event: &mut InputEvent = Box::leak(event);
+        let event: &mut LocalInputEvent = Box::leak(event);
         let ptr_event = event as *mut _;
         unsafe {
             let b = PostMessageW(
                 None,
-                WM_APP_INPUT_EVENT,
+                MessageCode::InputEvent as _,
                 WPARAM::default(),
                 LPARAM(ptr_event as isize),
             );
@@ -234,28 +221,25 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     let ptr_hook_event = lparam.0 as *const KBDLLHOOKSTRUCT;
     let hook_event = unsafe { *ptr_hook_event };
 
-    debug!("received keyboard event {:?}", hook_event);
+    // debug!("received keyboard hook event {:?}", hook_event);
 
     // map hook event to input event
     let key = VkCode(hook_event.vkCode).into();
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN => InputEvent::KeyDown { key }.into(),
-        WM_KEYUP => InputEvent::KeyUp { key }.into(),
-        _ => {
-            debug!("unhandled keyboard event {:?}", hook_event);
-            None
-        }
+        WM_KEYDOWN => LocalInputEvent::KeyDown { key }.into(),
+        WM_KEYUP => LocalInputEvent::KeyUp { key }.into(),
+        _ => None,
     };
 
     // send input event in a message to the mq
     if let Some(event) = event {
         let event = Box::new(event);
-        let event: &mut InputEvent = Box::leak(event);
+        let event: &mut LocalInputEvent = Box::leak(event);
         let ptr_event = event as *mut _;
         unsafe {
             let b = PostMessageW(
                 None,
-                WM_APP_INPUT_EVENT,
+                MessageCode::InputEvent as _,
                 WPARAM::default(),
                 LPARAM(ptr_event as isize),
             );
@@ -278,11 +262,13 @@ struct VkCode(u32);
 
 impl Into<KeyCode> for VkCode {
     fn into(self) -> KeyCode {
-        let vk_code = self.0;
+        let vk_code = self.0 as u16;
         // https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
         match vk_code {
+            n if n == VK_SPACE.0 => KeyCode::Space,
+            n if n == VK_RETURN.0 => KeyCode::Enter,
             0x41..=0x5A => {
-                let key_a = KeyCode::A as u32;
+                let key_a = KeyCode::A as u16;
                 let key = if key_a < 0x41 {
                     let d = 0x41 - key_a;
                     vk_code - d
@@ -292,7 +278,11 @@ impl Into<KeyCode> for VkCode {
                 };
                 unsafe { KeyCode::from_u16(key as _) }
             }
-            _ => todo!(),
+            n if n == VK_LCONTROL.0 => KeyCode::LeftCtrl,
+            n if n == VK_RCONTROL.0 => KeyCode::RightCtrl,
+            n if n == VK_LMENU.0 => KeyCode::LeftAlt,
+            n if n == VK_RMENU.0 => KeyCode::RightAlt,
+            n => todo!("{:?}", n),
         }
     }
 }

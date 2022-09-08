@@ -1,3 +1,5 @@
+pub mod event;
+
 use cfg_if::cfg_if;
 
 cfg_if! {
@@ -12,9 +14,4 @@ cfg_if! {
         mod windows;
         pub use self::windows::run;
     }
-}
-
-#[derive(Debug)]
-pub enum Signal {
-    SetShouldCapture(bool),
 }

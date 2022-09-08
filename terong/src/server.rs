@@ -1,145 +1,175 @@
 mod input_listener;
 mod protocol_server;
 
-use crate::event::InputEvent;
-use crate::event::MousePosition;
-use crate::server::input_listener::Signal;
-use crossbeam::channel::{self, TryRecvError};
-use log::debug;
+use crate::{input_event::InputEvent, protocol};
 use std::{
     collections::VecDeque,
     convert::identity,
     path::PathBuf,
-    thread,
+    sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
+use tokio::{
+    select,
+    sync::{mpsc, oneshot, watch},
+    try_join,
+};
+use tracing::{debug, info};
+
+use self::input_listener::event::{LocalInputEvent, MousePosition};
 
 /// Run the server application.
-pub fn run(config_file: Option<PathBuf>) {
-    debug!("starting server");
+pub async fn run(config_file: Option<PathBuf>) {
+    info!("starting server");
 
-    let mut app = App::new();
+    let (capture_input_flag_tx, capture_input_flag_rx) = watch::channel(false);
+    let mut app = App::new(capture_input_flag_tx);
 
-    let (stop_signal_tx, stop_signal_rx) = channel::bounded(0);
+    // start input listener
+    let (listener_event_sink, mut listener_event_source) = mpsc::unbounded_channel();
+    let mut listener = tokio::spawn(input_listener::run(
+        listener_event_sink,
+        capture_input_flag_rx,
+    ));
 
-    let (producer_signal_tx, producer_signal_rx) = channel::unbounded();
+    // start protocol server
+    let (server_event_sink, server_event_source) = tokio::sync::mpsc::unbounded_channel();
+    let mut server = tokio::spawn(protocol_server::run(server_event_source));
 
-    let (input_event_tx, input_event_rx) = channel::unbounded();
-    let (event_tx, event_rx) = channel::unbounded();
-
-    thread::scope(|s| {
-        // start input listener
-        let listener = thread::Builder::new()
-            .name("input-listener".to_owned())
-            .spawn_scoped(s, || {
-                input_listener::run(input_event_tx, producer_signal_rx, stop_signal_rx.clone());
-            })
-            .expect("failed to create thread for event producer");
-
-        // start protocol server
-        let server = thread::Builder::new()
-            .name("protocol-server".to_owned())
-            .spawn_scoped(s, || {
-                protocol_server::run(event_rx.clone(), stop_signal_rx.clone());
-            })
-            .expect("failed to create thread for protocol server");
-
-        let workers = [listener, server];
-
-        loop {
-            let finished = workers.iter().map(|x| x.is_finished()).any(identity);
-            if finished {
+    loop {
+        select! {
+            x = listener_event_source.recv() => {
+                match x {
+                    Some(event) => {
+                        app.handle_event(event).await;
+                        let pe = app.local_event_to_protocol_event(event);
+                        server_event_sink.send(pe).unwrap();
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+            _ = &mut listener => {
                 break;
             }
-
-            match input_event_rx.try_recv() {
-                Ok(InputEvent::MousePosition(pos)) => {
-                    app.drop_expired_events();
-
-                    // find 'bump'
-                    let found_first_bump = {
-                        let i = app
-                            .mouse_pos_buf
-                            .iter()
-                            .enumerate()
-                            .find(|(_, (pos, _))| if pos.x < 1 { true } else { false })
-                            .map(|(i, _)| i);
-
-                        if let Some(i) = i {
-                            let mut found = false;
-                            for j in i + 1..app.mouse_pos_buf.len() {
-                                let (pos, _) = app.mouse_pos_buf[j];
-                                if pos.x > 1 {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            found
-                        } else {
-                            false
-                        }
-                    };
-
-                    if dbg!(found_first_bump && pos.x < 1) {
-                        if !app.capture_input {
-                            app.capture_input = true;
-                            producer_signal_tx
-                                .send(Signal::SetShouldCapture(true))
-                                .unwrap();
-
-                            stop_signal_tx.send(()).unwrap();
-                        }
-                    }
-
-                    app.mouse_pos_buf.push_back((pos, Instant::now()));
-                }
-                Err(TryRecvError::Empty) => (),
-                _ => todo!(),
+            _ = &mut server => {
+                break;
             }
         }
+    }
 
-        debug!("stopping server");
-        stop_signal_tx.send(()).ok();
+    // stop workers
+    drop(listener_event_source);
+    drop(server_event_sink);
+    drop(app);
 
-        for w in workers {
-            w.join().unwrap();
-        }
-    });
+    try_join!(listener, server).unwrap();
 
-    debug!("server stopped");
+    info!("server stopped");
 }
 
 /// Application environment.
 #[derive(Debug)]
-struct App {
+struct Inner {
     /// Denotes if the input event listener should capture user inputs.
     ///
     /// The input event listener should still listen and propagate user inputs regardless of this value.
-    capture_input: bool,
+    capture_input_tx: watch::Sender<bool>,
     /// Buffer of mouse positions.
     ///
     /// Must be guaranteed to be sorted ascendingly by time.
     mouse_pos_buf: VecDeque<(MousePosition, Instant)>,
 }
 
+#[derive(Clone, Debug)]
+pub struct App {
+    inner: Arc<Mutex<Inner>>,
+}
+
 impl App {
-    pub fn new() -> Self {
-        Self {
-            capture_input: false,
+    pub fn new(capture_input_tx: watch::Sender<bool>) -> Self {
+        let inner = Inner {
+            capture_input_tx,
             mouse_pos_buf: VecDeque::new(),
-        }
+        };
+        let inner = Arc::new(Mutex::new(inner));
+        Self { inner }
     }
 
     /// Drop expired events from event buffer.
     pub fn drop_expired_events(&mut self) {
+        let mut app = self.inner.lock().unwrap();
         let now = Instant::now();
-        while let Some((_, t)) = self.mouse_pos_buf.front() {
+        while let Some((_, t)) = app.mouse_pos_buf.front() {
             let delta = now - *t;
             if delta > Duration::from_millis(200) {
-                self.mouse_pos_buf.pop_front();
+                app.mouse_pos_buf.pop_front();
             } else {
                 break;
             }
+        }
+    }
+
+    pub async fn handle_event(&mut self, event: LocalInputEvent) {
+        self.drop_expired_events();
+
+        let mut app = self.inner.lock().unwrap();
+
+        match event {
+            LocalInputEvent::MousePosition(pos) => {
+                let found_first_bump = {
+                    let i = app
+                        .mouse_pos_buf
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (pos, _))| if pos.x < 1 { true } else { false })
+                        .map(|(i, _)| i);
+
+                    if let Some(i) = i {
+                        let mut found = false;
+                        for j in i + 1..app.mouse_pos_buf.len() {
+                            let (pos, _) = app.mouse_pos_buf[j];
+                            if pos.x > 1 {
+                                found = true;
+                                break;
+                            }
+                        }
+                        found
+                    } else {
+                        false
+                    }
+                };
+
+                if found_first_bump && pos.x < 1 {
+                    app.capture_input_tx.send_if_modified(|x| {
+                        if *x == true {
+                            return false;
+                        }
+                        *x = true;
+                        true
+                    });
+                }
+
+                app.mouse_pos_buf.push_back((pos, Instant::now()));
+            }
+            _ => (),
+        }
+    }
+
+    fn local_event_to_protocol_event(&self, le: LocalInputEvent) -> protocol::InputEvent {
+        match le {
+            LocalInputEvent::MousePosition(pos) => {
+                let app = self.inner.lock().unwrap();
+                let (prev, _) = app.mouse_pos_buf.back().unwrap();
+                let (dx, dy) = prev.delta_to(pos);
+                InputEvent::MouseMove { dx, dy }
+            }
+            LocalInputEvent::MouseButtonDown { button } => InputEvent::MouseButtonDown { button },
+            LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
+            LocalInputEvent::MouseScroll {} => InputEvent::MouseScroll {},
+            LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
+            LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
         }
     }
 }

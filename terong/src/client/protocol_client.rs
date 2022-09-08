@@ -1,15 +1,15 @@
 mod client {
-    use crate::protocol::{Event, ServerMessage};
+    use crate::protocol::{InputEvent, ServerMessage};
     use anyhow::Error;
     use bytes::{Buf, BufMut, BytesMut};
-    use crossbeam::channel::Sender;
-    use log::debug;
     use std::{
         convert::TryInto,
         io::{self, Read},
         net::{SocketAddr, TcpStream},
         time::Duration,
     };
+    use tokio::sync::mpsc;
+    use tracing::debug;
 
     enum State {
         Idle,
@@ -21,12 +21,15 @@ mod client {
         state: State,
         stream: TcpStream,
         buffer: BytesMut,
-        event_sink: Sender<Event>,
+        event_sink: mpsc::Sender<InputEvent>,
     }
 
     impl Client {
         /// Establish connection to the server.
-        pub fn connect(addr: SocketAddr, event_sink: Sender<Event>) -> Result<Self, Error> {
+        pub fn connect(
+            addr: SocketAddr,
+            event_sink: mpsc::Sender<InputEvent>,
+        ) -> Result<Self, Error> {
             let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
 
             let s = Self {
@@ -84,8 +87,8 @@ mod client {
                 }
                 State::ReadMsg { msg } => {
                     match msg {
-                        ServerMessage::Event(x) => {
-                            self.event_sink.send(*x)?;
+                        ServerMessage::InputEvent(x) => {
+                            // self.event_sink.send(*x)?;
                         }
                         _ => todo!(),
                     };
@@ -98,12 +101,12 @@ mod client {
 }
 
 use self::client::Client;
-use crate::protocol::Event;
+use crate::protocol::InputEvent;
 use anyhow::Error;
-use crossbeam::channel::{Receiver, Sender, TryRecvError};
-use log::{debug, info};
+use tokio::sync::mpsc;
+use tracing::{debug, info};
 
-pub fn run(event_sink: Sender<Event>, stop_signal: Receiver<()>) {
+pub fn run(event_sink: mpsc::Sender<InputEvent>, stop_signal: mpsc::Receiver<()>) {
     let addr = "192.168.123.31:5000"
         .parse()
         .expect("server address was invalid");
@@ -113,18 +116,18 @@ pub fn run(event_sink: Sender<Event>, stop_signal: Receiver<()>) {
     run_client(&mut client, &stop_signal).unwrap();
 }
 
-fn run_client(client: &mut Client, stop_signal: &Receiver<()>) -> Result<(), Error> {
-    loop {
-        match stop_signal.try_recv() {
-            Ok(_) => {
-                debug!("received stop signal");
-                break;
-            }
-            Err(TryRecvError::Empty) => (),
-            Err(err) => return Err(err.into()),
-        }
+fn run_client(client: &mut Client, stop_signal: &mpsc::Receiver<()>) -> Result<(), Error> {
+    // loop {
+    //     match stop_signal.try_recv() {
+    //         Ok(_) => {
+    //             debug!("received stop signal");
+    //             break;
+    //         }
+    //         Err(TryRecvError::Empty) => (),
+    //         Err(err) => return Err(err.into()),
+    //     }
 
-        client.drive_state()?;
-    }
+    //     client.drive_state()?;
+    // }
     Ok(())
 }

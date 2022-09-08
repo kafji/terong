@@ -1,4 +1,4 @@
-mod event;
+mod input_event;
 mod protocol;
 
 pub mod client;
