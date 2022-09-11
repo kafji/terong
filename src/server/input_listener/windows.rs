@@ -11,6 +11,7 @@ use std::{
 use tokio::{
     select,
     sync::{mpsc, watch},
+    task,
 };
 use tracing::{debug, error, warn};
 use windows::{
@@ -53,9 +54,16 @@ impl Drop for Unhooker {
     }
 }
 
-pub async fn run(
-    event_sink: mpsc::UnboundedSender<LocalInputEvent>,
-    mut capture_input_flag_source: watch::Receiver<bool>,
+pub fn start(
+    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
+    capture_input_rx: watch::Receiver<bool>,
+) -> task::JoinHandle<()> {
+    task::spawn(run(input_event_tx, capture_input_rx))
+}
+
+async fn run(
+    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
+    mut capture_input_rx: watch::Receiver<bool>,
 ) {
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
@@ -66,18 +74,18 @@ pub async fn run(
 
     loop {
         select! {
-            _ = event_sink.closed() => {
+            _ = input_event_tx.closed() => {
                 break;
             }
-            _ = capture_input_flag_source.changed() => {
-                let flag = *capture_input_flag_source.borrow();
+            _ = capture_input_rx.changed() => {
+                let flag = *capture_input_rx.borrow();
                 debug!("setting should capture flag to {}", flag);
                 set_should_capture_flag(flag);
             }
             x = event_rx.recv() => {
                 match x {
                     Some(event) => {
-                        if let Err(_) = event_sink.send(event) {
+                        if let Err(_) = input_event_tx.send(event) {
                             break;
                         }
                     }

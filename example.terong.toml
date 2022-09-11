@@ -1,9 +1,9 @@
 [server]
 # Which port the server should listen for incoming connection.
-port = 5000
+port = 3000
 # The client monitor position relative to the server monitor position.
 client_position = "left" # left or right
 
 [client]
 # Address of the server the client will connect to.
-server = "127.0.0.1:5000"
+server = "127.0.0.1:3000"
