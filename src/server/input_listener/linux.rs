@@ -1,7 +1,12 @@
-use crate::protocol::message::InputEvent;
-use crossbeam::channel::{Receiver, Sender};
-use tokio::task::JoinHandle;
+use super::event::LocalInputEvent;
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
-pub fn start(event_sink: Sender<InputEvent>, stop_signal: Receiver<()>) -> JoinHandle<()> {
+pub fn start(
+    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
+    capture_input_rx: watch::Receiver<bool>,
+) -> JoinHandle<()> {
     unimplemented!()
 }
