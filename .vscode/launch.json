@@ -4,10 +4,8 @@
             "name": "run server (windows)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}\\target\\debug\\terong.exe",
-            "args": [
-                "server"
-            ],
+            "program": "${workspaceFolder}\\target\\debug\\terong-server.exe",
+            "args": [],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         },
@@ -15,10 +13,8 @@
             "name": "run client (windows)",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}\\target\\debug\\terong.exe",
-            "args": [
-                "client"
-            ],
+            "program": "${workspaceFolder}\\target\\debug\\terong-client.exe",
+            "args": [],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal"
         }

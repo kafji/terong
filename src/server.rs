@@ -1,17 +1,18 @@
 mod input_listener;
 mod protocol_server;
 
-use crate::{input_event::InputEvent, protocol};
+use crate::protocol::InputEvent;
 use std::{
     collections::VecDeque,
-    convert::identity,
-    path::PathBuf,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::{
     select,
-    sync::{mpsc, oneshot, watch},
+    sync::{
+        mpsc::{self, UnboundedSender},
+        watch,
+    },
     try_join,
 };
 use tracing::{debug, info};
@@ -19,7 +20,7 @@ use tracing::{debug, info};
 use self::input_listener::event::{LocalInputEvent, MousePosition};
 
 /// Run the server application.
-pub async fn run(config_file: Option<PathBuf>) {
+pub async fn run() {
     info!("starting server");
 
     let (capture_input_flag_tx, capture_input_flag_rx) = watch::channel(false);
@@ -41,9 +42,7 @@ pub async fn run(config_file: Option<PathBuf>) {
             x = listener_event_source.recv() => {
                 match x {
                     Some(event) => {
-                        app.handle_input_event(event).await;
-                        let pe = app.local_event_to_protocol_event(event);
-                        server_event_sink.send(pe).unwrap();
+                        app.handle_input_event(event,&server_event_sink).await
                     }
                     None => {
                         break;
@@ -126,14 +125,16 @@ impl App {
         }
     }
 
-    pub async fn handle_input_event(&mut self, event: LocalInputEvent) {
-        debug!("handling {:?}", event);
-
+    pub async fn handle_input_event(
+        &mut self,
+        event: LocalInputEvent,
+        sink: &UnboundedSender<InputEvent>,
+    ) {
         self.drop_expired_events();
 
         let mut app = self.inner.lock().unwrap();
 
-        match event {
+        let event = match event {
             LocalInputEvent::MousePosition(pos) => {
                 let found_first_bump = {
                     let i = app
@@ -163,25 +164,27 @@ impl App {
                     app.active_computer = 1;
                 }
 
-                app.mouse_pos_buf.push_back((pos, Instant::now()));
-            }
-            _ => (),
-        }
-    }
+                let e = {
+                    if let Some((prev, _)) = app.mouse_pos_buf.back() {
+                        let delta @ (dx, dy) = prev.delta_to(&pos);
+                        dbg!(delta);
+                        InputEvent::MouseMove { dx, dy }
+                    } else {
+                        InputEvent::MouseMove { dx: 0, dy: 0 }
+                    }
+                };
 
-    fn local_event_to_protocol_event(&self, le: LocalInputEvent) -> protocol::InputEvent {
-        match le {
-            LocalInputEvent::MousePosition(pos) => {
-                let app = self.inner.lock().unwrap();
-                let (prev, _) = app.mouse_pos_buf.back().unwrap();
-                let (dx, dy) = prev.delta_to(pos);
-                InputEvent::MouseMove { dx, dy }
+                app.mouse_pos_buf.push_back((pos, Instant::now()));
+
+                e
             }
             LocalInputEvent::MouseButtonDown { button } => InputEvent::MouseButtonDown { button },
             LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
             LocalInputEvent::MouseScroll {} => InputEvent::MouseScroll {},
             LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
             LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
-        }
+        };
+
+        sink.send(event).unwrap()
     }
 }

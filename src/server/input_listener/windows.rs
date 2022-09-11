@@ -10,33 +10,26 @@ use std::{
 };
 use tokio::{
     select,
-    sync::{
-        mpsc::{self, UnboundedSender},
-        watch,
-    },
+    sync::{mpsc, watch},
 };
 use tracing::{debug, error, warn};
 use windows::{
     core::PCWSTR,
     w,
     Win32::{
-        Foundation::{GetLastError, BOOL, HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::HBRUSH,
-        System::{
-            Console::{SetConsoleCtrlHandler, CTRL_C_EVENT},
-            LibraryLoader::GetModuleHandleW,
-            Threading::ExitProcess,
-        },
+        System::LibraryLoader::GetModuleHandleW,
         UI::{
             Input::KeyboardAndMouse::{
-                VK_CONTROL, VK_LCONTROL, VK_LMENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_SPACE,
+                VK_LCONTROL, VK_LMENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_SPACE,
             },
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorInfo,
-                GetMessageW, PostMessageW, RegisterClassExW, SetCursor, SetCursorPos,
-                SetWindowsHookExW, ShowCursor, ShowWindow, SystemParametersInfoW,
-                UnhookWindowsHookEx, CURSORINFO, CW_USEDEFAULT, HCURSOR, HC_ACTION, HHOOK, HICON,
-                KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SHOW_WINDOW_CMD, SPI_GETWORKAREA,
+                GetMessageW, PostMessageW, RegisterClassExW, SetCursorPos, SetWindowsHookExW,
+                ShowCursor, ShowWindow, SystemParametersInfoW, UnhookWindowsHookEx, CURSORINFO,
+                CW_USEDEFAULT, HCURSOR, HC_ACTION, HHOOK, HICON, KBDLLHOOKSTRUCT, MSG,
+                MSLLHOOKSTRUCT, SHOW_WINDOW_CMD, SPI_GETWORKAREA,
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE,
                 WINDOW_STYLE, WM_APP, WM_CREATE, WM_DWMNCRENDERINGCHANGED, WM_GETMINMAXINFO,
                 WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCALCSIZE,
@@ -66,7 +59,10 @@ pub async fn run(
 ) {
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
-    let listener = thread::spawn(move || run_listener(event_tx));
+    let listener = thread::Builder::new()
+        .name("input-listener".to_owned())
+        .spawn(move || run_listener(event_tx))
+        .expect("failed to spawn input listener thread");
 
     loop {
         select! {
@@ -199,7 +195,6 @@ fn run_listener(event_sink: mpsc::UnboundedSender<LocalInputEvent>) {
                         let ptr_event = msg.lParam.0 as *mut LocalInputEvent;
                         // acquire input event, the box will ensure it will be freed
                         let event = *unsafe { Box::from_raw(ptr_event) };
-                        debug!("received event {:?}", event);
                         // propagate input event to the sink
                         if let Err(_) = event_sink.send(event) {
                             debug!("event sink was closed");
@@ -381,7 +376,7 @@ impl Into<KeyCode> for VkCode {
             n if n == VK_RCONTROL.0 => KeyCode::RightCtrl,
             n if n == VK_LMENU.0 => KeyCode::LeftAlt,
             n if n == VK_RMENU.0 => KeyCode::RightAlt,
-            n => KeyCode::Escape,
+            n => todo!(),
         }
     }
 }

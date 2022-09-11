@@ -5,7 +5,7 @@ use std::{convert::identity, path::PathBuf, thread};
 use tracing::debug;
 
 /// Run the client application.
-pub fn run(config_file: Option<PathBuf>) {
+pub fn run() {
     debug!("starting client");
 
     // let (stop_tx, stop_rx) = channel::bounded(0);
