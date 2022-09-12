@@ -1,4 +1,4 @@
-use crate::input_event::{KeyCode, MouseButton};
+use crate::protocol::{KeyCode, MouseButton};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LocalInputEvent {
@@ -19,7 +19,7 @@ pub struct MousePosition {
 }
 
 impl MousePosition {
-    pub fn delta_to(&self, other: &Self) -> (i32, i32) {
+    pub fn delta_to(&self, other: &Self) -> (i32 /* dx */, i32 /* dy */) {
         let MousePosition { x: x1, y: y1 } = *self;
         let MousePosition { x: x2, y: y2 } = *other;
         let x = x2 - x1;

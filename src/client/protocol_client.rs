@@ -8,7 +8,7 @@ use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
 };
-use tracing::{debug, info};
+use tracing::info;
 
 pub fn start(event_tx: mpsc::UnboundedSender<InputEvent>) -> JoinHandle<()> {
     task::spawn(run(event_tx))
@@ -29,6 +29,7 @@ async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), E
         .await
         .context("failed to connect to the server")?;
     info!("connected to {}", addr);
+
     let (mut source, mut sink) = stream.split();
     let mut inbox = MessageInbox::new(&mut source);
 
@@ -36,13 +37,11 @@ async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), E
     let hello_msg = ClientHello { version: "".into() };
     {
         let msg: ClientMessage = hello_msg.into();
-        debug!("sending hello message");
         protocol::send_msg(&mut sink, &msg).await
     }
     .context("failed to send hello message")?;
 
     // read handshake reply
-    debug!("receiving hello reply");
     let msg = inbox
         .recv_msg()
         .await
@@ -57,7 +56,6 @@ async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), E
 
     // handshake successful
 
-    debug!("processing event message");
     loop {
         // read event message
         let msg = inbox

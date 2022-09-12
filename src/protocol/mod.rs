@@ -1,3 +1,5 @@
+mod input_event;
+
 use anyhow::Error;
 use bytes::{Buf, BytesMut};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -5,15 +7,15 @@ use std::{convert::TryInto, fmt::Debug};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-pub use crate::input_event::*;
+pub use self::input_event::*;
 
 // server messages
 
 /// Server to client message.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum ServerMessage {
-    Event(InputEvent),
     HelloReply(ServerHello),
+    Event(InputEvent),
 }
 
 impl From<InputEvent> for ServerMessage {
@@ -50,12 +52,16 @@ pub struct ClientHello {
 
 // protocol wire format and message read/write
 
+/// Protocol message marker trait.
 pub trait Message: Serialize + DeserializeOwned {}
 
 impl Message for ServerMessage {}
 
 impl Message for ClientMessage {}
 
+/// Send protocol message.
+///
+/// This function is not cancel safe.
 pub async fn send_msg(
     sink: &mut (impl AsyncWrite + Unpin),
     msg: &(impl Message + Debug),
@@ -67,6 +73,7 @@ pub async fn send_msg(
     buf[0..2].copy_from_slice(&msg_len.to_be_bytes());
     bincode::serialize_into(&mut buf[2..], &msg)?;
     sink.write_all(&buf).await?;
+    sink.flush().await?;
     Ok(())
 }
 
@@ -87,6 +94,9 @@ where
         }
     }
 
+    /// Fill buffer until the specified size is reached.
+    ///
+    /// This function is cancel safe.
     async fn fill_buf(&mut self, size: usize) -> Result<(), Error> {
         while self.buf.len() < size {
             let size = self.src.read_buf(&mut self.buf).await?;
@@ -98,6 +108,9 @@ where
         Ok(())
     }
 
+    /// Receive protocol message.
+    ///
+    /// This function is cancel safe.
     pub async fn recv_msg<M>(&mut self) -> Result<M, Error>
     where
         M: Message + Debug,
@@ -109,5 +122,9 @@ where
         let msg: M = bincode::deserialize(&*msg)?;
         debug!("received message {:?}", msg);
         Ok(msg)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
     }
 }

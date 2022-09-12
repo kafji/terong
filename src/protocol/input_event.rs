@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use strum::{EnumIter, FromRepr};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum InputEvent {
@@ -13,7 +14,7 @@ pub enum InputEvent {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(FromRepr, EnumIter, Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum MouseButton {
     Left = 0,
     Right,
@@ -24,7 +25,7 @@ pub enum MouseButton {
 
 /// Keyboard key.
 #[repr(u16)]
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(FromRepr, EnumIter, Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum KeyCode {
     Escape = 0,
 
@@ -42,7 +43,12 @@ pub enum KeyCode {
     F11,
     F12,
 
-    Tilde,
+    PrintScreen,
+    ScrollLock,
+    PauseBreak,
+
+    /// The tilde key.
+    Grave,
 
     // digits
     D1,
@@ -57,9 +63,7 @@ pub enum KeyCode {
     D0,
 
     Minus,
-    Plus,
-
-    Backspace,
+    Equal,
 
     A,
     B,
@@ -88,8 +92,23 @@ pub enum KeyCode {
     Y,
     Z,
 
-    Tab,
+    LeftBrace,
+    RightBrace,
 
+    SemiColon,
+    Apostrophe,
+
+    Comma,
+    Dot,
+    Slash,
+
+    Backspace,
+    BackSlash,
+    Enter,
+
+    Space,
+
+    Tab,
     CapsLock,
 
     LeftShift,
@@ -104,25 +123,17 @@ pub enum KeyCode {
     LeftMeta,
     RightMeta,
 
-    Space,
-
-    Enter,
-
     Insert,
     Delete,
+
     Home,
     End,
+
     PageUp,
     PageDown,
 
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-}
-
-impl KeyCode {
-    pub unsafe fn from_u16(n: u16) -> Self {
-        std::mem::transmute(n)
-    }
+    Up,
+    Left,
+    Down,
+    Right,
 }

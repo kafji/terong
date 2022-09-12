@@ -3,7 +3,7 @@ mod protocol_server;
 mod app {
     use crate::{
         input_listener::event::{LocalInputEvent, MousePosition},
-        protocol::{self, InputEvent},
+        protocol::{self, InputEvent, KeyCode},
     };
     use anyhow::Error;
     use std::{
@@ -15,22 +15,66 @@ mod app {
         watch,
     };
 
+    #[derive(Default, Debug)]
+    struct EventBuffer {
+        buf: VecDeque<(LocalInputEvent, Instant)>,
+    }
+
+    impl EventBuffer {
+        fn prev_mouse_pos(&self) -> Option<MousePosition> {
+            self.buf
+                .iter()
+                .filter_map(|(x, _)| {
+                    if let LocalInputEvent::MousePosition(pos) = x {
+                        Some(*pos)
+                    } else {
+                        None
+                    }
+                })
+                .next()
+        }
+
+        fn prev_pressed_key(&self) -> Option<KeyCode> {
+            todo!()
+        }
+
+        fn push_input_event(&mut self, event: LocalInputEvent) {
+            let now = Instant::now();
+
+            // drop expired events
+            let part = self.buf.partition_point(|(_, t)| {
+                let d = now - *t;
+                d <= Duration::from_millis(200)
+            });
+            self.buf.resize_with(part, || unreachable!());
+
+            self.buf.push_front((event, now));
+
+            self.buf.make_contiguous();
+        }
+    }
+
+    /// Converts mouse absolute position to mouse relative position.
+    fn mouse_pos_to_mouse_rel(
+        evbuf: &EventBuffer,
+        pos: &MousePosition,
+    ) -> (i32 /* dx */, i32 /* dy */) {
+        match evbuf.prev_mouse_pos() {
+            Some(prev) => prev.delta_to(pos),
+            None => Default::default(),
+        }
+    }
+
     /// Application environment.
     #[derive(Debug)]
     struct Inner {
-        /// 0 for local (server)
-        active: u8,
         /// Denotes if the input event listener should capture user inputs.
         ///
         /// The input event listener should still listen and propagate user
         /// inputs regardless of this value.
         capture_input_tx: watch::Sender<bool>,
-        /// Buffer of mouse positions.
-        ///
-        /// Must be guaranteed to be sorted ascendingly by time.
-        mouse_pos_buf: VecDeque<(MousePosition, Instant)>,
 
-        input_event_rx: UnboundedReceiver<LocalInputEvent>,
+        evbuf: EventBuffer,
 
         proto_event_tx: UnboundedSender<protocol::InputEvent>,
     }
@@ -46,18 +90,6 @@ mod app {
                 false
             });
         }
-
-        fn drop_expired_mouse_position(&mut self) {
-            let now = Instant::now();
-            while let Some((_, t)) = self.mouse_pos_buf.front() {
-                let delta = now - *t;
-                if delta > Duration::from_millis(200) {
-                    self.mouse_pos_buf.pop_front();
-                } else {
-                    break;
-                }
-            }
-        }
     }
 
     #[derive(Debug)]
@@ -66,75 +98,28 @@ mod app {
     }
 
     impl App {
-        pub fn new() -> (
-            Self,
-            UnboundedSender<LocalInputEvent>,
-            UnboundedReceiver<protocol::InputEvent>,
-        ) {
+        pub fn new() -> (Self, UnboundedReceiver<protocol::InputEvent>) {
             let (capture_input_tx, _) = watch::channel(false);
-            let (input_event_tx, input_event_rx) = mpsc::unbounded_channel();
+
             let (proto_event_tx, proto_event_rx) = mpsc::unbounded_channel();
             let inner = Inner {
-                active: 0,
                 capture_input_tx,
-                mouse_pos_buf: VecDeque::new(),
-                input_event_rx,
+                evbuf: Default::default(),
                 proto_event_tx,
             };
             let s = Self { inner };
-            (s, input_event_tx, proto_event_rx)
+            (s, proto_event_rx)
         }
 
-        pub async fn handle_input_event(&mut self) -> Result<(), Error> {
-            let mut app = &mut self.inner;
-            let event = app.input_event_rx.recv().await.unwrap();
-
-            app.drop_expired_mouse_position();
+        pub async fn handle_input_event(&mut self, event: LocalInputEvent) -> Result<(), Error> {
+            let app = &mut self.inner;
+            let evbuf = &mut app.evbuf;
+            evbuf.push_input_event(event);
 
             let proto_event = match event {
                 LocalInputEvent::MousePosition(pos) => {
-                    let found_first_bump = {
-                        // bump-in
-                        let i = app
-                            .mouse_pos_buf
-                            .iter()
-                            .enumerate()
-                            .find(|(_, (pos, _))| if pos.x < 1 { true } else { false })
-                            .map(|(i, _)| i);
-
-                        // bump-out
-                        if let Some(i) = i {
-                            let mut found = false;
-                            for j in i + 1..app.mouse_pos_buf.len() {
-                                let (pos, _) = app.mouse_pos_buf[j];
-                                if pos.x > 1 {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            found
-                        } else {
-                            false
-                        }
-                    };
-
-                    if found_first_bump && pos.x < 1 {
-                        app.set_capture_input(true);
-                        app.active = 1;
-                    }
-
-                    let pe = {
-                        if let Some((prev, _)) = app.mouse_pos_buf.back() {
-                            let (dx, dy) = prev.delta_to(&pos);
-                            InputEvent::MouseMove { dx, dy }
-                        } else {
-                            InputEvent::MouseMove { dx: 0, dy: 0 }
-                        }
-                    };
-
-                    app.mouse_pos_buf.push_back((pos, Instant::now()));
-
-                    pe
+                    let (dx, dy) = mouse_pos_to_mouse_rel(evbuf, &pos);
+                    InputEvent::MouseMove { dx, dy }
                 }
                 LocalInputEvent::MouseButtonDown { button } => {
                     InputEvent::MouseButtonDown { button }
@@ -145,7 +130,7 @@ mod app {
                 LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
             };
 
-            app.proto_event_tx.send(proto_event).unwrap();
+            app.proto_event_tx.send(proto_event)?;
 
             Ok(())
         }
@@ -158,15 +143,26 @@ mod app {
 }
 
 use self::app::App;
+use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
 /// Run the server application.
 pub async fn run() {
     info!("starting server");
-    let (mut app, input_event_tx, proto_event_rx) = App::new();
-    let _listener = crate::input_listener::start(input_event_tx, app.get_capture_input_rx());
-    let _server = protocol_server::start(proto_event_rx);
-    loop {
-        app.handle_input_event().await.unwrap();
+
+    let (input_event_tx, mut input_event_rx) = mpsc::unbounded_channel();
+    let (mut app, proto_event_rx) = App::new();
+
+    let listener = crate::input_listener::start(input_event_tx, app.get_capture_input_rx());
+
+    let server = protocol_server::start(proto_event_rx);
+
+    while let Some(event) = input_event_rx.recv().await {
+        app.handle_input_event(event).await.unwrap();
     }
+
+    drop(app);
+    try_join!(listener, server).unwrap();
+
+    info!("server stopped");
 }
