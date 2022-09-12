@@ -1,5 +1,5 @@
 use super::event::{LocalInputEvent, MousePosition};
-use crate::input_event::{KeyCode, MouseButton};
+use crate::protocol::{KeyCode, MouseButton};
 use once_cell::sync::OnceCell;
 use std::{
     ffi::c_void,
@@ -378,7 +378,7 @@ impl Into<KeyCode> for VkCode {
                     let d = key_a - 0x41;
                     vk_code + d
                 };
-                unsafe { KeyCode::from_u16(key as _) }
+                KeyCode::from_repr(key as _).unwrap()
             }
             n if n == VK_LCONTROL.0 => KeyCode::LeftCtrl,
             n if n == VK_RCONTROL.0 => KeyCode::RightCtrl,

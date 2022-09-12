@@ -1,6 +1,6 @@
-use crate::input_event::InputEvent;
-use tokio::sync::mpsc;
+use crate::protocol::InputEvent;
+use tokio::{sync::mpsc, task::JoinHandle};
 
-pub fn run(event_source: mpsc::Receiver<InputEvent>, stop_signal: mpsc::Receiver<()>) {
+pub fn start(event_rx: mpsc::UnboundedReceiver<InputEvent>) -> JoinHandle<()> {
     unimplemented!()
 }
