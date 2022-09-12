@@ -1,133 +1,77 @@
-mod client {
-    use crate::protocol::{InputEvent, ServerMessage};
-    use anyhow::Error;
-    use bytes::{Buf, BufMut, BytesMut};
-    use std::{
-        convert::TryInto,
-        io::{self, Read},
-        net::{SocketAddr, TcpStream},
-        time::Duration,
-    };
-    use tokio::sync::mpsc;
-    use tracing::debug;
-
-    enum State {
-        Idle,
-        ReadMsgLen { msg_len: u16 },
-        ReadMsg { msg: ServerMessage },
-    }
-
-    pub struct Client {
-        state: State,
-        stream: TcpStream,
-        buffer: BytesMut,
-        event_sink: mpsc::Sender<InputEvent>,
-    }
-
-    impl Client {
-        /// Establish connection to the server.
-        pub fn connect(
-            addr: SocketAddr,
-            event_sink: mpsc::Sender<InputEvent>,
-        ) -> Result<Self, Error> {
-            let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
-
-            let s = Self {
-                state: State::Idle,
-                stream,
-                buffer: Default::default(),
-                event_sink,
-            };
-            Ok(s)
-        }
-
-        fn fill_buffer_at_least(&mut self, size: usize) -> Result<usize, Error> {
-            let mut read = 0;
-            while self.buffer.len() < size {
-                let mut buf = [0; 4096];
-                read = self.stream.read(&mut buf)?;
-                if read == 0 {
-                    let err = io::Error::from(io::ErrorKind::UnexpectedEof);
-                    return Err(err.into());
-                }
-                self.buffer.put(&buf[..read]);
-            }
-            Ok(read)
-        }
-
-        fn read_msg_len(&mut self) -> Result<u16, Error> {
-            if self.buffer.len() < 2 {
-                self.fill_buffer_at_least(2)?;
-            }
-            let length = self.buffer.get_u16();
-            Ok(length)
-        }
-
-        fn read_msg(&mut self, len: u16) -> Result<ServerMessage, Error> {
-            let len: usize = len.try_into()?;
-            if self.buffer.len() < len {
-                self.fill_buffer_at_least(len)?;
-            }
-            let bytes = self.buffer.copy_to_bytes(len);
-            let msg = bincode::deserialize(bytes.chunk())?;
-            Ok(msg)
-        }
-
-        pub fn drive_state(&mut self) -> Result<(), Error> {
-            self.state = match &self.state {
-                State::Idle => {
-                    let msg_len = self.read_msg_len()?;
-                    debug!("received message length {}", msg_len);
-                    State::ReadMsgLen { msg_len }
-                }
-                State::ReadMsgLen { msg_len } => {
-                    let msg = self.read_msg(*msg_len)?;
-                    debug!("received message {:?}", msg);
-                    State::ReadMsg { msg }
-                }
-                State::ReadMsg { msg } => {
-                    match msg {
-                        ServerMessage::InputEvent(x) => {
-                            // self.event_sink.send(*x)?;
-                        }
-                        _ => todo!(),
-                    };
-                    State::Idle
-                }
-            };
-            Ok(())
-        }
-    }
-}
-
-use self::client::Client;
-use crate::protocol::InputEvent;
-use anyhow::Error;
-use tokio::sync::mpsc;
+use crate::protocol::{
+    self, ClientHello, ClientMessage, InputEvent, MessageInbox, ServerHello, ServerMessage,
+};
+use anyhow::{bail, Context, Error};
+use std::net::SocketAddr;
+use tokio::{
+    net::TcpStream,
+    sync::mpsc,
+    task::{self, JoinHandle},
+};
 use tracing::{debug, info};
 
-pub fn run(event_sink: mpsc::Sender<InputEvent>, stop_signal: mpsc::Receiver<()>) {
-    let addr = "192.168.123.31:5000"
-        .parse()
-        .expect("server address was invalid");
-    debug!("connecting to {}", addr);
-    let mut client = Client::connect(addr, event_sink).expect("failed to connect to the server");
-    info!("connected to {}", addr);
-    run_client(&mut client, &stop_signal).unwrap();
+pub fn start(event_tx: mpsc::UnboundedSender<InputEvent>) -> JoinHandle<()> {
+    task::spawn(run(event_tx))
 }
 
-fn run_client(client: &mut Client, stop_signal: &mpsc::Receiver<()>) -> Result<(), Error> {
-    // loop {
-    //     match stop_signal.try_recv() {
-    //         Ok(_) => {
-    //             debug!("received stop signal");
-    //             break;
-    //         }
-    //         Err(TryRecvError::Empty) => (),
-    //         Err(err) => return Err(err.into()),
-    //     }
+async fn run(event_tx: mpsc::UnboundedSender<InputEvent>) {
+    run_client(event_tx).await.unwrap();
+}
 
-    //     client.drive_state()?;
-    // }
+async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), Error> {
+    let addr: SocketAddr = "192.168.123.31:3000"
+        .parse()
+        .context("server address was invalid")?;
+
+    // open connection with the server
+    info!("connecting to {}", addr);
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .context("failed to connect to the server")?;
+    info!("connected to {}", addr);
+    let (mut source, mut sink) = stream.split();
+    let mut inbox = MessageInbox::new(&mut source);
+
+    // send handshake message
+    let hello_msg = ClientHello { version: "".into() };
+    {
+        let msg: ClientMessage = hello_msg.into();
+        debug!("sending hello message");
+        protocol::send_msg(&mut sink, &msg).await
+    }
+    .context("failed to send hello message")?;
+
+    // read handshake reply
+    debug!("receiving hello reply");
+    let msg = inbox
+        .recv_msg()
+        .await
+        .context("failed to read hello reply")?;
+    if let ServerMessage::HelloReply(reply) = msg {
+        if let ServerHello::Err(err) = reply {
+            bail!("handshake failure, {}", err)
+        }
+    } else {
+        bail!("expecting hello reply, but was {:?}", msg);
+    }
+
+    // handshake successful
+
+    debug!("processing event message");
+    loop {
+        // read event message
+        let msg = inbox
+            .recv_msg()
+            .await
+            .context("failed to read event message")?;
+        if let ServerMessage::Event(event) = msg {
+            if let Err(_) = event_tx.send(event) {
+                break;
+            }
+        } else {
+            bail!("expecting event message, but was {:?}", msg);
+        }
+    }
+
     Ok(())
 }

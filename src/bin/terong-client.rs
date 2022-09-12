@@ -7,5 +7,5 @@ async fn main() {
         .with_thread_ids(true)
         .init();
 
-    terong::client::run();
+    terong::client::run().await;
 }

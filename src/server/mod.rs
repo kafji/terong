@@ -1,9 +1,10 @@
-mod input_listener;
 mod protocol_server;
 
 mod app {
-    use super::input_listener::event::{LocalInputEvent, MousePosition};
-    use crate::protocol::{self, InputEvent};
+    use crate::{
+        input_listener::event::{LocalInputEvent, MousePosition},
+        protocol::{self, InputEvent},
+    };
     use anyhow::Error;
     use std::{
         collections::VecDeque,
@@ -21,7 +22,8 @@ mod app {
         active: u8,
         /// Denotes if the input event listener should capture user inputs.
         ///
-        /// The input event listener should still listen and propagate user inputs regardless of this value.
+        /// The input event listener should still listen and propagate user
+        /// inputs regardless of this value.
         capture_input_tx: watch::Sender<bool>,
         /// Buffer of mouse positions.
         ///
@@ -162,7 +164,7 @@ use tracing::info;
 pub async fn run() {
     info!("starting server");
     let (mut app, input_event_tx, proto_event_rx) = App::new();
-    let _listener = input_listener::start(input_event_tx, app.get_capture_input_rx());
+    let _listener = crate::input_listener::start(input_event_tx, app.get_capture_input_rx());
     let _server = protocol_server::start(proto_event_rx);
     loop {
         app.handle_input_event().await.unwrap();
