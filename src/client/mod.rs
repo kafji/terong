@@ -1,4 +1,4 @@
-mod input_consumer;
+mod input_sink;
 mod protocol_client;
 
 use tokio::sync::mpsc;
@@ -12,7 +12,7 @@ pub async fn run() {
 
     let client = protocol_client::start(event_tx.clone());
 
-    let consumer = input_consumer::start(event_rx);
+    let consumer = input_sink::start(event_rx);
 
     tokio::try_join!(client, consumer).unwrap();
 

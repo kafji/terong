@@ -1,5 +1,5 @@
 use crate::protocol::{
-    self, ClientHello, ClientMessage, InputEvent, MessageInbox, ServerHello, ServerMessage,
+    self, ClientMessage, HelloMessage, HelloReply, InputEvent, MessageInbox, ServerMessage,
 };
 use anyhow::{bail, Context, Error};
 use std::net::SocketAddr;
@@ -34,7 +34,7 @@ async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), E
     let mut inbox = MessageInbox::new(&mut source);
 
     // send handshake message
-    let hello_msg = ClientHello { version: "".into() };
+    let hello_msg = HelloMessage { version: "".into() };
     {
         let msg: ClientMessage = hello_msg.into();
         protocol::send_msg(&mut sink, &msg).await
@@ -47,8 +47,8 @@ async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), E
         .await
         .context("failed to read hello reply")?;
     if let ServerMessage::HelloReply(reply) = msg {
-        if let ServerHello::Err(err) = reply {
-            bail!("handshake failure, {}", err)
+        if let HelloReply::Err(err) = reply {
+            bail!("handshake failure, {:?}", err)
         }
     } else {
         bail!("expecting hello reply, but was {:?}", msg);

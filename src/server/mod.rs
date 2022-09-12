@@ -2,14 +2,11 @@ mod protocol_server;
 
 mod app {
     use crate::{
-        input_listener::event::{LocalInputEvent, MousePosition},
+        input_source::event::{LocalInputEvent, MousePosition},
         protocol::{self, InputEvent, KeyCode},
     };
     use anyhow::Error;
-    use std::{
-        collections::VecDeque,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
     use tokio::sync::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         watch,
@@ -17,25 +14,35 @@ mod app {
 
     #[derive(Default, Debug)]
     struct EventBuffer {
-        buf: VecDeque<(LocalInputEvent, Instant)>,
+        buf: Vec<(LocalInputEvent, Instant)>,
     }
 
     impl EventBuffer {
         fn prev_mouse_pos(&self) -> Option<MousePosition> {
-            self.buf
-                .iter()
-                .filter_map(|(x, _)| {
-                    if let LocalInputEvent::MousePosition(pos) = x {
-                        Some(*pos)
-                    } else {
-                        None
-                    }
-                })
-                .next()
+            self.buf.iter().find_map(|(x, _)| {
+                if let LocalInputEvent::MousePosition(pos) = x {
+                    Some(*pos)
+                } else {
+                    None
+                }
+            })
         }
 
-        fn prev_pressed_key(&self) -> Option<KeyCode> {
-            todo!()
+        fn recent_pressed_keys(&self) -> Vec<KeyCode> {
+            // pairs of key up & key down
+            let mut pressed = Vec::new();
+            for (i, (x, _)) in self.buf[..=self.buf.len() - 2].iter().enumerate() {
+                if let LocalInputEvent::KeyUp { key: up } = x {
+                    for (y, _) in &self.buf[i + 1..] {
+                        if let LocalInputEvent::KeyDown { key: down } = y {
+                            if up == down {
+                                pressed.push(*up);
+                            }
+                        }
+                    }
+                }
+            }
+            pressed
         }
 
         fn push_input_event(&mut self, event: LocalInputEvent) {
@@ -46,11 +53,9 @@ mod app {
                 let d = now - *t;
                 d <= Duration::from_millis(200)
             });
-            self.buf.resize_with(part, || unreachable!());
+            self.buf.truncate(part);
 
-            self.buf.push_front((event, now));
-
-            self.buf.make_contiguous();
+            self.buf.insert(0, (event, now));
         }
     }
 
@@ -65,6 +70,24 @@ mod app {
         }
     }
 
+    /// Converts local input event into protocol input event.
+    fn local_event_to_proto_event(
+        evbuf: &EventBuffer,
+        local: LocalInputEvent,
+    ) -> protocol::InputEvent {
+        match local {
+            LocalInputEvent::MousePosition(pos) => {
+                let (dx, dy) = mouse_pos_to_mouse_rel(evbuf, &pos);
+                InputEvent::MouseMove { dx, dy }
+            }
+            LocalInputEvent::MouseButtonDown { button } => InputEvent::MouseButtonDown { button },
+            LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
+            LocalInputEvent::MouseScroll {} => InputEvent::MouseScroll {},
+            LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
+            LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
+        }
+    }
+
     /// Application environment.
     #[derive(Debug)]
     struct Inner {
@@ -73,22 +96,19 @@ mod app {
         /// The input event listener should still listen and propagate user
         /// inputs regardless of this value.
         capture_input_tx: watch::Sender<bool>,
-
+        /// Event buffer.
         evbuf: EventBuffer,
-
+        /// Protocol input event sink.
         proto_event_tx: UnboundedSender<protocol::InputEvent>,
     }
 
     impl Inner {
         /// Updates capture input flag.
-        fn set_capture_input(&self, new: bool) {
-            self.capture_input_tx.send_if_modified(|old| {
-                if *old != new {
-                    *old = new;
-                    return true;
-                }
-                false
-            });
+        fn toggle_capture_input(&mut self) -> bool {
+            let old = *self.capture_input_tx.borrow();
+            let new = !old;
+            self.capture_input_tx.send_replace(new);
+            new
         }
     }
 
@@ -112,25 +132,26 @@ mod app {
         }
 
         pub async fn handle_input_event(&mut self, event: LocalInputEvent) -> Result<(), Error> {
-            let app = &mut self.inner;
-            let evbuf = &mut app.evbuf;
+            let evbuf = &mut self.inner.evbuf;
+
             evbuf.push_input_event(event);
 
-            let proto_event = match event {
-                LocalInputEvent::MousePosition(pos) => {
-                    let (dx, dy) = mouse_pos_to_mouse_rel(evbuf, &pos);
-                    InputEvent::MouseMove { dx, dy }
+            let capture = {
+                let keys = evbuf.recent_pressed_keys();
+                let mut keys = keys.iter();
+                let first = keys.next();
+                let second = keys.next();
+                if let (Some(KeyCode::RightCtrl), Some(KeyCode::RightCtrl)) = (first, second) {
+                    self.inner.toggle_capture_input()
+                } else {
+                    *self.inner.capture_input_tx.borrow()
                 }
-                LocalInputEvent::MouseButtonDown { button } => {
-                    InputEvent::MouseButtonDown { button }
-                }
-                LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
-                LocalInputEvent::MouseScroll {} => InputEvent::MouseScroll {},
-                LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
-                LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
             };
 
-            app.proto_event_tx.send(proto_event)?;
+            if capture {
+                let proto_event = local_event_to_proto_event(&mut self.inner.evbuf, event);
+                self.inner.proto_event_tx.send(proto_event)?;
+            }
 
             Ok(())
         }
@@ -153,7 +174,7 @@ pub async fn run() {
     let (input_event_tx, mut input_event_rx) = mpsc::unbounded_channel();
     let (mut app, proto_event_rx) = App::new();
 
-    let listener = crate::input_listener::start(input_event_tx, app.get_capture_input_rx());
+    let listener = crate::input_source::start(input_event_tx, app.get_capture_input_rx());
 
     let server = protocol_server::start(proto_event_rx);
 

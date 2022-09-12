@@ -14,8 +14,14 @@ pub use self::input_event::*;
 /// Server to client message.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum ServerMessage {
-    HelloReply(ServerHello),
+    HelloReply(HelloReply),
     Event(InputEvent),
+}
+
+impl From<HelloReply> for ServerMessage {
+    fn from(x: HelloReply) -> Self {
+        Self::HelloReply(x)
+    }
 }
 
 impl From<InputEvent> for ServerMessage {
@@ -24,30 +30,43 @@ impl From<InputEvent> for ServerMessage {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum ServerHello {
-    Ok,
-    Err(String),
-}
-
 // client messages
 
 /// Client to server message.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum ClientMessage {
-    Hello(ClientHello),
+    Hello(HelloMessage),
 }
 
-impl From<ClientHello> for ClientMessage {
-    fn from(x: ClientHello) -> Self {
+impl From<HelloMessage> for ClientMessage {
+    fn from(x: HelloMessage) -> Self {
         Self::Hello(x)
     }
 }
 
+/// Client hello message.
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ClientHello {
+pub struct HelloMessage {
     /// Client app version.
     pub version: String,
+}
+
+/// Server hello reply.
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum HelloReply {
+    Ok,
+    Err(HelloReplyError),
+}
+
+impl From<HelloReplyError> for HelloReply {
+    fn from(x: HelloReplyError) -> Self {
+        Self::Err(x)
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum HelloReplyError {
+    VersionUnmatch,
 }
 
 // protocol wire format and message read/write

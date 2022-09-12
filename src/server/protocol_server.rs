@@ -40,8 +40,11 @@ mod server {
 }
 
 use self::server::Server;
-use crate::protocol::{InputEvent, ServerMessage};
-use anyhow::Error;
+use crate::protocol::{
+    self, ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, MessageInbox,
+    ServerMessage,
+};
+use anyhow::{bail, Error};
 use tokio::{
     net::{TcpListener, TcpStream},
     select,
@@ -93,10 +96,34 @@ async fn run_server(
         };
         let action = action?;
         match action {
-            Action::IncomingConnection(conn) => server.add_client(conn),
+            Action::IncomingConnection(mut conn) => {
+                protocol_handshake(&mut conn).await?;
+                server.add_client(conn)
+            }
             Action::SendMessage(msg) => server.send_message(msg).await?,
         }
     }
 
+    Ok(())
+}
+
+async fn protocol_handshake(stream: &mut TcpStream) -> Result<(), Error> {
+    let (mut source, mut sink) = stream.split();
+    let mut inbox = MessageInbox::new(&mut source);
+    let msg: ClientMessage = inbox.recv_msg().await?;
+    match msg {
+        ClientMessage::Hello(HelloMessage { version }) => {
+            // we doesn't have protocol version, so instead require identical version on
+            // both server and client
+            let msg: ServerMessage = if version == env!("CARGO_PKG_VERSION") {
+                let reply = HelloReply::Ok;
+                reply.into()
+            } else {
+                let reply: HelloReply = HelloReplyError::VersionUnmatch.into();
+                reply.into()
+            };
+            protocol::send_msg(&mut sink, &msg).await?;
+        }
+    }
     Ok(())
 }
