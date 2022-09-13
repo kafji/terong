@@ -1,5 +1,5 @@
 mod input_sink;
-mod protocol_client;
+mod transport_client;
 
 use tokio::sync::mpsc;
 use tracing::info;
@@ -10,7 +10,7 @@ pub async fn run() {
 
     let (event_tx, event_rx) = mpsc::unbounded_channel();
 
-    let client = protocol_client::start(event_tx.clone());
+    let client = transport_client::start(event_tx.clone());
 
     let consumer = input_sink::start(event_rx);
 

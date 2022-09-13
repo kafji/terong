@@ -1,7 +1,7 @@
 mod input_event;
 
 use anyhow::Error;
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Debug};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -66,7 +66,7 @@ impl From<HelloReplyError> for HelloReply {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum HelloReplyError {
-    VersionUnmatch,
+    VersionMismatch,
 }
 
 // protocol wire format and message read/write
@@ -97,16 +97,16 @@ pub async fn send_msg(
 }
 
 #[derive(Debug)]
-pub struct MessageInbox<'a, R> {
+pub struct MessageInbox<'a, S> {
     buf: BytesMut,
-    src: &'a mut R,
+    src: &'a mut S,
 }
 
-impl<'a, R> MessageInbox<'a, R>
+impl<'a, S> MessageInbox<'a, S>
 where
-    R: AsyncRead + Unpin,
+    S: AsyncRead + Unpin,
 {
-    pub fn new(src: &'a mut R) -> Self {
+    pub fn new(src: &'a mut S) -> Self {
         Self {
             buf: Default::default(),
             src,
@@ -145,5 +145,57 @@ where
 
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
+    }
+}
+
+#[derive(Debug)]
+pub struct MessageInboxRef<'a, S, B> {
+    src: &'a mut S,
+    buf: &'a mut B,
+}
+
+impl<'a, S, B> MessageInboxRef<'a, S, B> {
+    pub fn new(src: &'a mut S, buf: &'a mut B) -> Self {
+        Self { src, buf }
+    }
+}
+
+impl<'a, S, B> MessageInboxRef<'a, S, B>
+where
+    S: AsyncRead + Unpin,
+    B: Buf + BufMut,
+{
+    /// Fill buffer until the specified size is reached.
+    ///
+    /// This function is cancel safe.
+    async fn fill_buf(&mut self, size: usize) -> Result<(), Error> {
+        while self.buf.remaining() < size {
+            let size = self.src.read_buf(&mut self.buf).await?;
+            debug!("read {} bytes from source", size);
+            if size == 0 {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Receive protocol message.
+    ///
+    /// This function is cancel safe.
+    pub async fn recv_msg<M>(&mut self) -> Result<M, Error>
+    where
+        M: Message + Debug,
+    {
+        self.fill_buf(2).await?;
+        let length = self.buf.get_u16();
+        self.fill_buf(length as _).await?;
+        let msg = self.buf.copy_to_bytes(length as _);
+        let msg: M = bincode::deserialize(&*msg)?;
+        debug!("received message {:?}", msg);
+        Ok(msg)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buf.remaining() == 0
     }
 }

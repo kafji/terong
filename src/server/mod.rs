@@ -1,4 +1,4 @@
-mod protocol_server;
+mod transport_server;
 
 mod app {
     use crate::{
@@ -183,7 +183,7 @@ pub async fn run() {
 
     let listener = crate::input_source::start(input_event_tx, app.get_capture_input_rx());
 
-    let server = protocol_server::start(proto_event_rx);
+    let server = transport_server::start(proto_event_rx);
 
     while let Some(event) = input_event_rx.recv().await {
         debug!("received local event {:?}", event);
