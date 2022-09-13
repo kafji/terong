@@ -87,6 +87,7 @@ impl TryInto<Vec<LinuxInputEvent>> for InputEvent {
             }
             InputEvent::MouseScroll {} => todo!(),
             InputEvent::KeyDown { key } => vec![(EventCode::EV_KEY(key.into()), 1)],
+            InputEvent::KeyRepeat { key } => vec![(EventCode::EV_KEY(key.into()), 2)],
             InputEvent::KeyUp { key } => vec![(EventCode::EV_KEY(key.into()), 0)],
         };
 

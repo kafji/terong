@@ -9,6 +9,7 @@ pub enum LocalInputEvent {
     MouseScroll {},
 
     KeyDown { key: KeyCode },
+    KeyRepeat { key: KeyCode },
     KeyUp { key: KeyCode },
 }
 

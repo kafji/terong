@@ -11,6 +11,7 @@ mod app {
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         watch,
     };
+    use tracing::debug;
 
     #[derive(Default, Debug)]
     struct EventBuffer {
@@ -29,6 +30,9 @@ mod app {
         }
 
         fn recent_pressed_keys(&self) -> Vec<KeyCode> {
+            if self.buf.len() < 2 {
+                return Vec::new();
+            }
             // pairs of key up & key down
             let mut pressed = Vec::new();
             for (i, (x, _)) in self.buf[..=self.buf.len() - 2].iter().enumerate() {
@@ -51,7 +55,7 @@ mod app {
             // drop expired events
             let part = self.buf.partition_point(|(_, t)| {
                 let d = now - *t;
-                d <= Duration::from_millis(200)
+                d <= Duration::from_millis(500)
             });
             self.buf.truncate(part);
 
@@ -84,6 +88,7 @@ mod app {
             LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
             LocalInputEvent::MouseScroll {} => InputEvent::MouseScroll {},
             LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
+            LocalInputEvent::KeyRepeat { key } => InputEvent::KeyRepeat { key },
             LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
         }
     }
@@ -107,6 +112,7 @@ mod app {
         fn toggle_capture_input(&mut self) -> bool {
             let old = *self.capture_input_tx.borrow();
             let new = !old;
+            debug!("setting capture input to {}", new);
             self.capture_input_tx.send_replace(new);
             new
         }
@@ -138,6 +144,7 @@ mod app {
 
             let capture = {
                 let keys = evbuf.recent_pressed_keys();
+                debug!("recent pressed keys {:?}", keys);
                 let mut keys = keys.iter();
                 let first = keys.next();
                 let second = keys.next();
@@ -165,7 +172,7 @@ mod app {
 
 use self::app::App;
 use tokio::{sync::mpsc, try_join};
-use tracing::info;
+use tracing::{debug, info};
 
 /// Run the server application.
 pub async fn run() {
@@ -179,6 +186,7 @@ pub async fn run() {
     let server = protocol_server::start(proto_event_rx);
 
     while let Some(event) = input_event_rx.recv().await {
+        debug!("received local event {:?}", event);
         app.handle_input_event(event).await.unwrap();
     }
 

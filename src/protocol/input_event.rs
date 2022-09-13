@@ -11,6 +11,7 @@ pub enum InputEvent {
     MouseScroll {},
 
     KeyDown { key: KeyCode },
+    KeyRepeat { key: KeyCode },
     KeyUp { key: KeyCode },
 }
 
@@ -139,135 +140,153 @@ pub enum KeyCode {
     Right,
 }
 
+/// Define a bidirectional conversion.
+macro_rules! define_injection {
+    ($l_ty:ty, $r_ty:ty, { $($l_var:ident => $r_var:ident,)* }) => {
+        impl Into<$r_ty> for $l_ty {
+            fn into(self) -> $r_ty {
+                use $l_ty::*;
+                use $r_ty::*;
+                match self {
+                    $($l_var => $r_var,)*
+                }
+            }
+        }
+
+        paste::paste! {
+            impl $l_ty {
+                pub fn [<from_$r_ty:lower>](x: $r_ty) -> Option<Self> {
+                    use $r_ty::*;
+                    use $l_ty::*;
+                    match x {
+                        $($r_var => Some($l_var),)*
+                        _ => None,
+                    }
+                }
+            }
+        }
+    };
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
     use evdev_rs::enums::EV_KEY;
 
-    impl Into<EV_KEY> for KeyCode {
-        fn into(self) -> EV_KEY {
-            use KeyCode::*;
-            use EV_KEY::*;
-            match self {
-                Escape => KEY_ESC,
+    define_injection!(KeyCode, EV_KEY, {
+        Escape => KEY_ESC,
 
-                F1 => KEY_F1,
-                F2 => KEY_F2,
-                F3 => KEY_F3,
-                F4 => KEY_F4,
-                F5 => KEY_F5,
-                F6 => KEY_F6,
-                F7 => KEY_F7,
-                F8 => KEY_F8,
-                F9 => KEY_F9,
-                F10 => KEY_F10,
-                F11 => KEY_F11,
-                F12 => KEY_F12,
+        F1 => KEY_F1,
+        F2 => KEY_F2,
+        F3 => KEY_F3,
+        F4 => KEY_F4,
+        F5 => KEY_F5,
+        F6 => KEY_F6,
+        F7 => KEY_F7,
+        F8 => KEY_F8,
+        F9 => KEY_F9,
+        F10 => KEY_F10,
+        F11 => KEY_F11,
+        F12 => KEY_F12,
 
-                PrintScreen => KEY_PRINT,
-                ScrollLock => KEY_SCROLLLOCK,
-                PauseBreak => KEY_PAUSE,
+        PrintScreen => KEY_PRINT,
+        ScrollLock => KEY_SCROLLLOCK,
+        PauseBreak => KEY_PAUSE,
 
-                Grave => KEY_GRAVE,
+        Grave => KEY_GRAVE,
 
-                D1 => KEY_1,
-                D2 => KEY_2,
-                D3 => KEY_3,
-                D4 => KEY_4,
-                D5 => KEY_5,
-                D6 => KEY_6,
-                D7 => KEY_7,
-                D8 => KEY_8,
-                D9 => KEY_9,
-                D0 => KEY_0,
+        D1 => KEY_1,
+        D2 => KEY_2,
+        D3 => KEY_3,
+        D4 => KEY_4,
+        D5 => KEY_5,
+        D6 => KEY_6,
+        D7 => KEY_7,
+        D8 => KEY_8,
+        D9 => KEY_9,
+        D0 => KEY_0,
 
-                Minus => KEY_MINUS,
-                Equal => KEY_EQUAL,
+        Minus => KEY_MINUS,
+        Equal => KEY_EQUAL,
 
-                A => KEY_A,
-                B => KEY_B,
-                C => KEY_C,
-                D => KEY_D,
-                E => KEY_E,
-                F => KEY_F,
-                G => KEY_G,
-                H => KEY_H,
-                I => KEY_I,
-                J => KEY_J,
-                K => KEY_K,
-                L => KEY_L,
-                M => KEY_M,
-                N => KEY_N,
-                O => KEY_O,
-                P => KEY_P,
-                Q => KEY_Q,
-                R => KEY_R,
-                S => KEY_S,
-                T => KEY_T,
-                U => KEY_U,
-                V => KEY_V,
-                W => KEY_W,
-                X => KEY_X,
-                Y => KEY_Y,
-                Z => KEY_Z,
+        A => KEY_A,
+        B => KEY_B,
+        C => KEY_C,
+        D => KEY_D,
+        E => KEY_E,
+        F => KEY_F,
+        G => KEY_G,
+        H => KEY_H,
+        I => KEY_I,
+        J => KEY_J,
+        K => KEY_K,
+        L => KEY_L,
+        M => KEY_M,
+        N => KEY_N,
+        O => KEY_O,
+        P => KEY_P,
+        Q => KEY_Q,
+        R => KEY_R,
+        S => KEY_S,
+        T => KEY_T,
+        U => KEY_U,
+        V => KEY_V,
+        W => KEY_W,
+        X => KEY_X,
+        Y => KEY_Y,
+        Z => KEY_Z,
 
-                LeftBrace => KEY_LEFTBRACE,
-                RightBrace => KEY_RIGHTBRACE,
+        LeftBrace => KEY_LEFTBRACE,
+        RightBrace => KEY_RIGHTBRACE,
 
-                SemiColon => KEY_SEMICOLON,
-                Apostrophe => KEY_APOSTROPHE,
+        SemiColon => KEY_SEMICOLON,
+        Apostrophe => KEY_APOSTROPHE,
 
-                Comma => KEY_COMMA,
-                Dot => KEY_DOT,
-                Slash => KEY_SLASH,
+        Comma => KEY_COMMA,
+        Dot => KEY_DOT,
+        Slash => KEY_SLASH,
 
-                Backspace => KEY_BACKSPACE,
-                BackSlash => KEY_BACKSLASH,
-                Enter => KEY_ENTER,
+        Backspace => KEY_BACKSPACE,
+        BackSlash => KEY_BACKSLASH,
+        Enter => KEY_ENTER,
 
-                Space => KEY_SPACE,
+        Space => KEY_SPACE,
 
-                Tab => EV_KEY::KEY_TAB,
-                CapsLock => KEY_CAPSLOCK,
+        Tab => KEY_TAB,
+        CapsLock => KEY_CAPSLOCK,
 
-                LeftShift => KEY_LEFTSHIFT,
-                RightShift => KEY_RIGHTSHIFT,
+        LeftShift => KEY_LEFTSHIFT,
+        RightShift => KEY_RIGHTSHIFT,
 
-                LeftCtrl => KEY_LEFTALT,
-                RightCtrl => KEY_RIGHTCTRL,
+        LeftCtrl => KEY_LEFTCTRL,
+        RightCtrl => KEY_RIGHTCTRL,
 
-                LeftAlt => KEY_LEFTALT,
-                RightAlt => KEY_RIGHTALT,
+        LeftAlt => KEY_LEFTALT,
+        RightAlt => KEY_RIGHTALT,
 
-                LeftMeta => KEY_LEFTMETA,
-                RightMeta => KEY_RIGHTMETA,
+        LeftMeta => KEY_LEFTMETA,
+        RightMeta => KEY_RIGHTMETA,
 
-                Insert => KEY_INSERT,
-                Delete => KEY_DELETE,
+        Insert => KEY_INSERT,
+        Delete => KEY_DELETE,
 
-                Home => KEY_HOME,
-                End => KEY_END,
+        Home => KEY_HOME,
+        End => KEY_END,
 
-                PageUp => KEY_PAGEUP,
-                PageDown => KEY_PAGEDOWN,
+        PageUp => KEY_PAGEUP,
+        PageDown => KEY_PAGEDOWN,
 
-                Up => KEY_UP,
-                Left => KEY_LEFT,
-                Down => KEY_DOWN,
-                Right => KEY_RIGHT,
-            }
-        }
-    }
+        Up => KEY_UP,
+        Left => KEY_LEFT,
+        Down => KEY_DOWN,
+        Right => KEY_RIGHT,
+    });
 
-    impl Into<EV_KEY> for MouseButton {
-        fn into(self) -> EV_KEY {
-            match self {
-                MouseButton::Left => EV_KEY::BTN_LEFT,
-                MouseButton::Right => EV_KEY::BTN_RIGHT,
-                MouseButton::Middle => EV_KEY::BTN_MIDDLE,
-                MouseButton::Mouse4 => EV_KEY::BTN_4,
-                MouseButton::Mouse5 => EV_KEY::BTN_5,
-            }
-        }
-    }
+    define_injection!(MouseButton, EV_KEY, {
+        Left => BTN_LEFT,
+        Right => BTN_RIGHT,
+        Middle => BTN_MIDDLE,
+        Mouse4 => BTN_4,
+        Mouse5 => BTN_5,
+    });
 }

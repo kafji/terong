@@ -62,12 +62,6 @@ async fn run(mut proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) {
     run_server(&mut server, &mut proto_event_rx).await.unwrap();
 }
 
-#[derive(Debug)]
-enum Action {
-    IncomingConnection(TcpStream),
-    SendMessage(ServerMessage),
-}
-
 async fn run_server(
     server: &mut Server,
     proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>,
@@ -77,31 +71,23 @@ async fn run_server(
     let listener = TcpListener::bind(addr).await?;
 
     loop {
-        let action: Result<Action, Error> = select! {
+        select! {
             x = listener.accept() => {
-                match x {
-                    Ok((conn, addr)) => {
-                        info!("received connection from {}", addr);
-                        Ok(Action::IncomingConnection(conn))
-                    },
-                    Err(err) => Err(err.into()),
-                }
+                let (mut conn, addr) = x?;
+                info!("received connection from {}", addr);
+                protocol_handshake(&mut conn).await?;
+                server.add_client(conn);
             }
             x = proto_event_rx.recv() => {
                 match x {
-                    Some(event) => Ok(Action::SendMessage(event.into())),
+                    Some(event) => {
+                        let msg = event.into();
+                        server.send_message(msg).await?;
+                    }
                     None => break,
                 }
             }
         };
-        let action = action?;
-        match action {
-            Action::IncomingConnection(mut conn) => {
-                protocol_handshake(&mut conn).await?;
-                server.add_client(conn)
-            }
-            Action::SendMessage(msg) => server.send_message(msg).await?,
-        }
     }
 
     Ok(())

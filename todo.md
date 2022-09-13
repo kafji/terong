@@ -1,7 +1,7 @@
 # Todo
 
-- on windows, hide mouse cursor when capture is on
+- on windows, hide mouse cursor when input capture is on
 
-- linux input source
+- on linux, capturing input might make a key press stuck (receive key down but key up is captured)
 
 - tls
