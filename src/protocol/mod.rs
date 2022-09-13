@@ -3,7 +3,7 @@ mod input_event;
 use anyhow::Error;
 use bytes::{Buf, BufMut, BytesMut};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{convert::TryInto, fmt::Debug};
+use std::{convert::TryInto, fmt::Debug, marker::PhantomData};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
@@ -149,18 +149,18 @@ where
 }
 
 #[derive(Debug)]
-pub struct MessageInboxRef<'a, S, B> {
+pub struct MessageReader<'a, S, B> {
     src: &'a mut S,
     buf: &'a mut B,
 }
 
-impl<'a, S, B> MessageInboxRef<'a, S, B> {
+impl<'a, S, B> MessageReader<'a, S, B> {
     pub fn new(src: &'a mut S, buf: &'a mut B) -> Self {
         Self { src, buf }
     }
 }
 
-impl<'a, S, B> MessageInboxRef<'a, S, B>
+impl<'a, S, B> MessageReader<'a, S, B>
 where
     S: AsyncRead + Unpin,
     B: Buf + BufMut,
@@ -197,5 +197,50 @@ where
 
     pub fn is_empty(&self) -> bool {
         self.buf.remaining() == 0
+    }
+}
+
+#[derive(Debug)]
+pub struct Transport<S, IN, OUT> {
+    stream: S,
+    read_buf: BytesMut,
+    _in: PhantomData<IN>,
+    _out: PhantomData<OUT>,
+}
+
+impl<S, IN, OUT> Transport<S, IN, OUT> {
+    pub fn new(stream: S) -> Self {
+        Self {
+            stream,
+            read_buf: Default::default(),
+            _in: PhantomData,
+            _out: PhantomData,
+        }
+    }
+}
+
+impl<S, IN, OUT> Transport<S, IN, OUT>
+where
+    S: AsyncWrite + Unpin,
+    OUT: Message + Debug,
+{
+    pub async fn send_msg<'a>(&mut self, msg: impl Into<OUT>) -> Result<(), Error> {
+        let msg = msg.into();
+        send_msg(&mut self.stream, &msg).await
+    }
+}
+
+impl<S, IN, OUT> Transport<S, IN, OUT>
+where
+    S: AsyncRead + Unpin,
+    IN: Message + Debug,
+{
+    fn as_reader(&mut self) -> MessageReader<S, BytesMut> {
+        MessageReader::new(&mut self.stream, &mut self.read_buf)
+    }
+
+    pub async fn recv_msg(&mut self) -> Result<IN, Error> {
+        let mut reader = self.as_reader();
+        reader.recv_msg().await
     }
 }

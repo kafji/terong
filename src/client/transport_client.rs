@@ -1,24 +1,39 @@
 use crate::protocol::{
-    self, ClientMessage, HelloMessage, HelloReply, InputEvent, MessageInbox, ServerMessage,
+    self, ClientMessage, HelloMessage, HelloReply, InputEvent, MessageInbox, MessageReader,
+    ServerMessage, Transport,
 };
 use anyhow::{bail, Context, Error};
-use std::net::SocketAddr;
+use bytes::BytesMut;
+use std::{fmt::Debug, net::SocketAddr};
 use tokio::{
+    io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     sync::mpsc,
     task::{self, JoinHandle},
 };
+use tokio_native_tls::{native_tls::Certificate, TlsConnector};
 use tracing::info;
 
-pub fn start(event_tx: mpsc::UnboundedSender<InputEvent>) -> JoinHandle<()> {
-    task::spawn(run(event_tx))
+pub fn start(mut event_tx: mpsc::UnboundedSender<InputEvent>) -> JoinHandle<()> {
+    task::spawn(async move { run_client(&mut event_tx).await.unwrap() })
 }
 
-async fn run(event_tx: mpsc::UnboundedSender<InputEvent>) {
-    run_client(event_tx).await.unwrap();
-}
+async fn run_client(event_tx: &mut mpsc::UnboundedSender<InputEvent>) -> Result<(), Error> {
+    let tls: TlsConnector = {
+        use tokio_native_tls::native_tls::{Identity, Protocol, TlsConnector};
+        let identity = Identity::from_pkcs8(&[], &[])?;
+        let certificate = Certificate::from_pem(&[])?;
+        TlsConnector::builder()
+            .identity(identity)
+            .min_protocol_version(Some(Protocol::Tlsv12))
+            .add_root_certificate(certificate)
+            .disable_built_in_roots(true)
+            .build()?
+            .into()
+    };
 
-async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), Error> {
+    todo!();
+
     let addr: SocketAddr = "192.168.123.31:3000"
         .parse()
         .context("server address was invalid")?;
@@ -72,4 +87,45 @@ async fn run_client(event_tx: mpsc::UnboundedSender<InputEvent>) -> Result<(), E
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct ConnectionSession<S> {
+    transport: Transport<S, ServerMessage, ClientMessage>,
+}
+
+impl<S> ConnectionSession<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    pub async fn new(stream: S) -> Result<Self, Error> {
+        let transport = Transport::new(stream);
+        let mut s = Self { transport };
+        s.handshake().await?;
+        Ok(s)
+    }
+
+    async fn handshake(&mut self) -> Result<(), Error> {
+        let transport = self.transport();
+
+        let msg = HelloMessage {
+            version: env!("CARGO_PKG_VERSION").into(),
+        };
+        transport.send_msg(msg).await?;
+
+        let msg = transport.recv_msg().await?;
+        if let ServerMessage::HelloReply(reply) = msg {
+            if let HelloReply::Err(err) = reply {
+                bail!("handshake failure, {:?}", err)
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<S> ConnectionSession<S> {
+    fn transport(&mut self) -> &mut Transport<S, ServerMessage, ClientMessage> {
+        &mut self.transport
+    }
 }

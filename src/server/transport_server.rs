@@ -1,9 +1,7 @@
 use crate::protocol::{
-    self, ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, MessageInboxRef,
-    ServerMessage,
+    ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage, Transport,
 };
 use anyhow::{Context, Error};
-use bytes::BytesMut;
 use std::net::SocketAddr;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -34,7 +32,7 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
     info!("listening at {}", server_addr);
     let listener = TcpListener::bind(server_addr).await?;
 
-    let mut session: Option<Session<_>> = None;
+    let mut session: Option<ClientSession<_>> = None;
 
     loop {
         select! { biased;
@@ -44,7 +42,7 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
                     match x {
                         Some(event) => {
                             let msg: ServerMessage = event.into();
-                            session.send_msg(&msg).await?;
+                            session.transport().send_msg(msg).await?;
                         }
                         None => break,
                     }
@@ -61,7 +59,7 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
                         .await
                         .context("failed to upgrade connection to tls")?;
                     info!(?peer_addr, "creating new session");
-                    session = Session::new(stream, peer_addr).await?.into();
+                    session = ClientSession::new(stream).await?.into();
                 } else {
                     info!("already have active session");
                 }
@@ -73,33 +71,25 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
 }
 
 #[derive(Debug)]
-struct Session<S> {
-    stream: S,
-    peer_addr: SocketAddr,
-    read_buf: BytesMut,
+struct ClientSession<S> {
+    transport: Transport<S, ClientMessage, ServerMessage>,
 }
 
-impl<S> Session<S>
+impl<S> ClientSession<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn new(stream: S, peer_addr: SocketAddr) -> Result<Session<S>, Error> {
-        let mut s = Self {
-            stream,
-            peer_addr,
-            read_buf: Default::default(),
-        };
-
+    pub async fn new(stream: S) -> Result<Self, Error> {
+        let transport = Transport::new(stream);
+        let mut s = Self { transport };
         s.handshake().await?;
-
         Ok(s)
     }
 
     async fn handshake(&mut self) -> Result<(), Error> {
-        let peer_addr = self.peer_addr;
-        debug!(?peer_addr, "protocol handshaking");
+        let transport = self.transport();
 
-        let msg: ClientMessage = self.recv_msg().await?;
+        let msg: ClientMessage = transport.recv_msg().await?;
 
         match msg {
             ClientMessage::Hello(HelloMessage { version }) => {
@@ -113,7 +103,7 @@ where
                     let reply: HelloReply = HelloReplyError::VersionMismatch.into();
                     reply.into()
                 };
-                self.send_msg(&msg).await?;
+                transport.send_msg(msg).await?;
             }
         }
 
@@ -121,25 +111,8 @@ where
     }
 }
 
-impl<S> Session<S>
-where
-    S: AsyncWrite + Unpin,
-{
-    async fn send_msg(&mut self, msg: &ServerMessage) -> Result<(), Error> {
-        protocol::send_msg(&mut self.stream, msg).await
-    }
-}
-
-impl<S> Session<S>
-where
-    S: AsyncRead + Unpin,
-{
-    fn as_inbox(&mut self) -> MessageInboxRef<S, BytesMut> {
-        MessageInboxRef::new(&mut self.stream, &mut self.read_buf)
-    }
-
-    pub async fn recv_msg(&mut self) -> Result<ClientMessage, Error> {
-        let mut inbox = self.as_inbox();
-        inbox.recv_msg().await
+impl<S> ClientSession<S> {
+    fn transport(&mut self) -> &mut Transport<S, ClientMessage, ServerMessage> {
+        &mut self.transport
     }
 }
