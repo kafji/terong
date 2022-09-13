@@ -275,8 +275,10 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
 
     // send input event in a message to the mq
     if let Some(event) = event {
-        let event = Box::new(event);
-        let event: &mut LocalInputEvent = Box::leak(event);
+        let event = {
+            let x = Box::new(event);
+            Box::leak(x)
+        };
         let ptr_event = event as *mut _;
         unsafe {
             let b = PostMessageW(
@@ -335,8 +337,10 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
 
     // send input event in a message to the mq
     if let Some(event) = event {
-        let event = Box::new(event);
-        let event: &mut LocalInputEvent = Box::leak(event);
+        let event = {
+            let x = Box::new(event);
+            Box::leak(x)
+        };
         let ptr_event = event as *mut _;
         unsafe {
             let b = PostMessageW(
