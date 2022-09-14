@@ -1,7 +1,9 @@
 mod input_event;
 
+use crate::{impl_from, transport::Certificate};
 use anyhow::Error;
 use bytes::{Buf, BufMut, BytesMut};
+use futures::Future;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Debug, marker::PhantomData};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -9,238 +11,71 @@ use tracing::debug;
 
 pub use self::input_event::*;
 
-// server messages
-
-/// Server to client message.
+/// Sum type of server to client messages.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum ServerMessage {
+    /// Handshake response message.
     HelloReply(HelloReply),
     Event(InputEvent),
 }
 
-impl From<HelloReply> for ServerMessage {
-    fn from(x: HelloReply) -> Self {
-        Self::HelloReply(x)
-    }
-}
+impl_from!(ServerMessage, {
+     Self::HelloReply => HelloReply,
+     Self::Event => InputEvent,
+});
 
-impl From<InputEvent> for ServerMessage {
-    fn from(x: InputEvent) -> Self {
-        Self::Event(x)
-    }
-}
-
-// client messages
-
-/// Client to server message.
+/// Sum type of client to server messages.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum ClientMessage {
+    /// Handshake initiation message.
     Hello(HelloMessage),
 }
 
-impl From<HelloMessage> for ClientMessage {
-    fn from(x: HelloMessage) -> Self {
-        Self::Hello(x)
-    }
-}
+impl_from!(ClientMessage, {
+    Self::Hello => HelloMessage,
+});
 
 /// Client hello message.
+///
+/// After sending this message client will wait for [HelloReply] response.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct HelloMessage {
     /// Client app version.
-    pub version: String,
+    pub client_version: String,
+    /// Client TLS certificate.
+    ///
+    /// The server will inspect this value before upgrading connection to TLS.
+    pub client_tls_cert: Certificate,
 }
 
-/// Server hello reply.
+/// Server response for [HelloMessage] from client.
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum HelloReply {
-    Ok,
+    Ok(HelloReplyMessage),
     Err(HelloReplyError),
 }
 
-impl From<HelloReplyError> for HelloReply {
-    fn from(x: HelloReplyError) -> Self {
-        Self::Err(x)
-    }
+impl_from!(HelloReply, {
+    Self::Ok => HelloReplyMessage,
+    Self::Err => HelloReplyError,
+});
+
+/// Successful response for [HelloMessage].
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct HelloReplyMessage {
+    /// Server TLS certificate.
+    ///
+    /// The client will inspect this value before upgrading connection to TLS.
+    pub server_tls_cert: Certificate,
 }
 
+/// Error response for [HelloMessage].
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum HelloReplyError {
+    /// Server and client are in different version.
+    ///
+    /// We doesn't have protocol version. Instead we require the server and the
+    /// client to have identical version. In other words, we always assume
+    /// different protocol version on each revision.
     VersionMismatch,
-}
-
-// protocol wire format and message read/write
-
-/// Protocol message marker trait.
-pub trait Message: Serialize + DeserializeOwned {}
-
-impl Message for ServerMessage {}
-
-impl Message for ClientMessage {}
-
-/// Send protocol message.
-///
-/// This function is not cancel safe.
-pub async fn send_msg(
-    sink: &mut (impl AsyncWrite + Unpin),
-    msg: &(impl Message + Debug),
-) -> Result<(), Error> {
-    debug!("sending message {:?}", msg);
-    let msg_len: u16 = bincode::serialized_size(&msg)?.try_into()?;
-    let len = 2 + msg_len as usize;
-    let mut buf = vec![0; len];
-    buf[0..2].copy_from_slice(&msg_len.to_be_bytes());
-    bincode::serialize_into(&mut buf[2..], &msg)?;
-    sink.write_all(&buf).await?;
-    sink.flush().await?;
-    Ok(())
-}
-
-#[derive(Debug)]
-pub struct MessageInbox<'a, S> {
-    buf: BytesMut,
-    src: &'a mut S,
-}
-
-impl<'a, S> MessageInbox<'a, S>
-where
-    S: AsyncRead + Unpin,
-{
-    pub fn new(src: &'a mut S) -> Self {
-        Self {
-            buf: Default::default(),
-            src,
-        }
-    }
-
-    /// Fill buffer until the specified size is reached.
-    ///
-    /// This function is cancel safe.
-    async fn fill_buf(&mut self, size: usize) -> Result<(), Error> {
-        while self.buf.len() < size {
-            let size = self.src.read_buf(&mut self.buf).await?;
-            debug!("read {} bytes from source", size);
-            if size == 0 {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Receive protocol message.
-    ///
-    /// This function is cancel safe.
-    pub async fn recv_msg<M>(&mut self) -> Result<M, Error>
-    where
-        M: Message + Debug,
-    {
-        self.fill_buf(2).await?;
-        let length = self.buf.get_u16();
-        self.fill_buf(length as _).await?;
-        let msg = self.buf.copy_to_bytes(length as _);
-        let msg: M = bincode::deserialize(&*msg)?;
-        debug!("received message {:?}", msg);
-        Ok(msg)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-}
-
-#[derive(Debug)]
-pub struct MessageReader<'a, S, B> {
-    src: &'a mut S,
-    buf: &'a mut B,
-}
-
-impl<'a, S, B> MessageReader<'a, S, B> {
-    pub fn new(src: &'a mut S, buf: &'a mut B) -> Self {
-        Self { src, buf }
-    }
-}
-
-impl<'a, S, B> MessageReader<'a, S, B>
-where
-    S: AsyncRead + Unpin,
-    B: Buf + BufMut,
-{
-    /// Fill buffer until the specified size is reached.
-    ///
-    /// This function is cancel safe.
-    async fn fill_buf(&mut self, size: usize) -> Result<(), Error> {
-        while self.buf.remaining() < size {
-            let size = self.src.read_buf(&mut self.buf).await?;
-            debug!("read {} bytes from source", size);
-            if size == 0 {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Receive protocol message.
-    ///
-    /// This function is cancel safe.
-    pub async fn recv_msg<M>(&mut self) -> Result<M, Error>
-    where
-        M: Message + Debug,
-    {
-        self.fill_buf(2).await?;
-        let length = self.buf.get_u16();
-        self.fill_buf(length as _).await?;
-        let msg = self.buf.copy_to_bytes(length as _);
-        let msg: M = bincode::deserialize(&*msg)?;
-        debug!("received message {:?}", msg);
-        Ok(msg)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.buf.remaining() == 0
-    }
-}
-
-#[derive(Debug)]
-pub struct Transport<S, IN, OUT> {
-    stream: S,
-    read_buf: BytesMut,
-    _in: PhantomData<IN>,
-    _out: PhantomData<OUT>,
-}
-
-impl<S, IN, OUT> Transport<S, IN, OUT> {
-    pub fn new(stream: S) -> Self {
-        Self {
-            stream,
-            read_buf: Default::default(),
-            _in: PhantomData,
-            _out: PhantomData,
-        }
-    }
-}
-
-impl<S, IN, OUT> Transport<S, IN, OUT>
-where
-    S: AsyncWrite + Unpin,
-    OUT: Message + Debug,
-{
-    pub async fn send_msg<'a>(&mut self, msg: impl Into<OUT>) -> Result<(), Error> {
-        let msg = msg.into();
-        send_msg(&mut self.stream, &msg).await
-    }
-}
-
-impl<S, IN, OUT> Transport<S, IN, OUT>
-where
-    S: AsyncRead + Unpin,
-    IN: Message + Debug,
-{
-    fn as_reader(&mut self) -> MessageReader<S, BytesMut> {
-        MessageReader::new(&mut self.stream, &mut self.read_buf)
-    }
-
-    pub async fn recv_msg(&mut self) -> Result<IN, Error> {
-        let mut reader = self.as_reader();
-        reader.recv_msg().await
-    }
 }

@@ -1,8 +1,16 @@
-use crate::protocol::{
-    ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage, Transport,
+use crate::{
+    protocol::{
+        ClientMessage, HelloMessage, HelloReply, HelloReplyError, HelloReplyMessage, InputEvent,
+        ServerMessage,
+    },
+    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport},
 };
 use anyhow::{Context, Error};
-use std::net::SocketAddr;
+use rustls::{
+    server::{ClientCertVerified, ClientCertVerifier},
+    DistinguishedNames,
+};
+use std::{net::SocketAddr, sync::Arc, time::SystemTime};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpListener,
@@ -10,7 +18,7 @@ use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
 };
-use tokio_native_tls::TlsAcceptor;
+use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
 use tracing::{debug, info};
 
 pub fn start(mut proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) -> JoinHandle<()> {
@@ -19,12 +27,11 @@ pub fn start(mut proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) -> JoinHan
 
 async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result<(), Error> {
     let tls: TlsAcceptor = {
-        use tokio_native_tls::native_tls::{Identity, Protocol, TlsAcceptor};
-        let identity = Identity::from_pkcs8(&[], &[])?;
-        TlsAcceptor::builder(identity)
-            .min_protocol_version(Some(Protocol::Tlsv12))
-            .build()?
-            .into()
+        let cfg = ServerConfig::builder()
+            .with_safe_defaults()
+            .with_client_cert_verifier(Arc::new(SingleCertVerifier::new(vec![todo!()].into())))
+            .with_single_cert(todo!(), todo!())?;
+        Arc::new(cfg).into()
     };
 
     let server_addr: SocketAddr = "0.0.0.0:3000".parse().context("invalid socket address")?;
@@ -59,7 +66,7 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
                         .await
                         .context("failed to upgrade connection to tls")?;
                     info!(?peer_addr, "creating new session");
-                    session = ClientSession::new(stream).await?.into();
+                    session = ClientSession::new(todo!(), todo!(), stream).await?.into();
                 } else {
                     info!("already have active session");
                 }
@@ -71,39 +78,51 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
 }
 
 #[derive(Debug)]
-struct ClientSession<S> {
+struct ClientSession<'a, S> {
+    server_tls_cert: &'a Certificate,
     transport: Transport<S, ClientMessage, ServerMessage>,
 }
 
-impl<S> ClientSession<S>
+impl<'a, S> ClientSession<'a, S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn new(stream: S) -> Result<Self, Error> {
+    pub async fn new(
+        server_tls_key: &PrivateKey,
+        server_tls_cert: &'a Certificate,
+        stream: S,
+    ) -> Result<ClientSession<'a, S>, Error> {
         let transport = Transport::new(stream);
-        let mut s = Self { transport };
+        let mut s = Self {
+            server_tls_cert,
+            transport,
+        };
         s.handshake().await?;
         Ok(s)
     }
 
     async fn handshake(&mut self) -> Result<(), Error> {
-        let transport = self.transport();
-
-        let msg: ClientMessage = transport.recv_msg().await?;
+        let msg: ClientMessage = self.transport.recv_msg().await?;
 
         match msg {
-            ClientMessage::Hello(HelloMessage { version }) => {
+            ClientMessage::Hello(HelloMessage {
+                client_version,
+                client_tls_cert,
+            }) => {
                 // We doesn't have protocol version, so instead we require identical version on
                 // both server and client. In other words, we assume different protocol for each
                 // version.
-                let msg: ServerMessage = if version == env!("CARGO_PKG_VERSION") {
-                    let reply = HelloReply::Ok;
+                let msg: ServerMessage = if client_version == env!("CARGO_PKG_VERSION") {
+                    let reply: HelloReply = HelloReplyMessage {
+                        server_tls_cert: self.server_tls_cert.clone(),
+                    }
+                    .into();
                     reply.into()
                 } else {
                     let reply: HelloReply = HelloReplyError::VersionMismatch.into();
                     reply.into()
                 };
-                transport.send_msg(msg).await?;
+                self.transport.send_msg(msg).await?;
             }
         }
 
@@ -111,7 +130,7 @@ where
     }
 }
 
-impl<S> ClientSession<S> {
+impl<S> ClientSession<'_, S> {
     fn transport(&mut self) -> &mut Transport<S, ClientMessage, ServerMessage> {
         &mut self.transport
     }
