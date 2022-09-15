@@ -3,7 +3,7 @@ use crate::{
         ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
         UpgradeTransportRequest,
     },
-    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport},
+    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
 };
 use anyhow::{Context, Error};
 use rustls::{
@@ -31,7 +31,9 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
     info!("listening at {}", server_addr);
     let listener = TcpListener::bind(server_addr).await?;
 
-    let mut session: Option<ClientSession<_>> = None;
+    let mut transporter: Option<Transporter<_, _, _, _>> = None;
+
+    let mut state = State::Handshaking;
 
     loop {
         select! { biased;
@@ -58,7 +60,7 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
                         .await
                         .context("failed to upgrade connection to tls")?;
                     info!(?peer_addr, "creating new session");
-                    session = ClientSession::new(todo!(), todo!(), stream).await?.into();
+                    session = Session::new(todo!(), todo!(), stream).await?.into();
                 } else {
                     info!("already have active session");
                 }
@@ -69,26 +71,49 @@ async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result
     Ok(())
 }
 
+async fn run_session<S>(session: Session<S>) -> JoinHandle<()> {
+    task::spawn(async {
+        let Session { transport } = session;
+        let mut state = State::Handshaking;
+        loop {
+            match state {
+                State::Handshaking => todo!(),
+                State::UpgradingTransport {
+                    server_tls_cert,
+                    client_tls_cert,
+                } => todo!(),
+                State::Idle => todo!(),
+                State::ReceivedEvent { event } => todo!(),
+            }
+        }
+    })
+}
+
 #[derive(Debug)]
-struct ClientSession<'a, S> {
-    server_tls_cert: &'a Certificate,
+enum State {
+    Handshaking,
+    UpgradingTransport {
+        server_tls_cert: Certificate,
+        client_tls_cert: Certificate,
+    },
+    Idle,
+    ReceivedEvent {
+        event: InputEvent,
+    },
+}
+
+#[derive(Debug)]
+struct Session<S> {
     transport: Transport<S, ClientMessage, ServerMessage>,
 }
 
-impl<'a, S> ClientSession<'a, S>
+impl<S> Session<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn new(
-        server_tls_key: &PrivateKey,
-        server_tls_cert: &'a Certificate,
-        stream: S,
-    ) -> Result<ClientSession<'a, S>, Error> {
+    pub async fn new(stream: S) -> Result<Session<S>, Error> {
         let transport = Transport::new(stream);
-        let mut s = Self {
-            server_tls_cert,
-            transport,
-        };
+        let mut s = Self { transport };
         s.handshake().await?;
         Ok(s)
     }
@@ -122,7 +147,7 @@ where
     }
 }
 
-impl<S> ClientSession<'_, S> {
+impl<S> Session<'_, S> {
     fn transport(&mut self) -> &mut Transport<S, ClientMessage, ServerMessage> {
         &mut self.transport
     }
