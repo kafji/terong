@@ -2,7 +2,7 @@ use crate::{
     newtype,
     protocol::{ClientMessage, ServerMessage},
 };
-use anyhow::Error;
+use anyhow::{bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
 use rustls::{
@@ -13,6 +13,7 @@ use rustls::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Debug, marker::PhantomData, time::SystemTime};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio_rustls::TlsStream;
 use tracing::debug;
 
 /// Protocol message marker trait.
@@ -109,7 +110,7 @@ impl<S, IN, OUT> Transport<S, IN, OUT> {
     }
 
     /// Maps stream while keeping other internal data intact.
-    pub async fn try_map_stream<T, F, Fut>(self, map: F) -> Result<Transport<T, IN, OUT>, Error>
+    async fn try_map_stream<T, F, Fut>(self, map: F) -> Result<Transport<T, IN, OUT>, Error>
     where
         F: FnOnce(S) -> Fut,
         Fut: Future<Output = Result<T, Error>>,
@@ -160,6 +161,54 @@ where
     pub async fn recv_msg(&mut self) -> Result<IN, Error> {
         let mut reader = self.as_msg_reader();
         reader.recv_msg().await
+    }
+}
+
+/// Facilitates acquiring and upgrading [Transport].
+#[derive(Debug)]
+pub enum Transporter<PS /* plain text stream */, SS /* secure stream */, IN, OUT> {
+    PlainText(Transport<PS, IN, OUT>),
+    Secure(Transport<SS, IN, OUT>),
+}
+
+impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT>
+where
+    PS: Debug,
+    SS: Debug,
+    IN: Debug,
+    OUT: Debug,
+{
+    /// Mutably borrow plain text transport.
+    pub fn plain_text(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
+        if let Self::PlainText(t) = &mut self {
+            Ok(t)
+        } else {
+            bail!("expecting plain text transport, but was {:?}", self)
+        }
+    }
+
+    /// Upgrades plain text transport to secure transport.
+    pub async fn upgrade<F, Fut>(self, upgrader: F) -> Result<Self, Error>
+    where
+        F: FnOnce(PS) -> Fut,
+        Fut: Future<Output = Result<SS, Error>>,
+    {
+        match self {
+            Self::PlainText(t) => {
+                let t = t.try_map_stream(upgrader).await?;
+                Ok(Self::Secure(t))
+            }
+            _ => bail!("expecting plain text transport, but was {:?}", self),
+        }
+    }
+
+    /// Mutably borrow secure transport.
+    pub fn secure(&mut self) -> Result<&mut Transport<SS, IN, OUT>, Error> {
+        if let Self::Secure(t) = &mut self {
+            Ok(t)
+        } else {
+            bail!("expecting secure transport, but was {:?}", self)
+        }
     }
 }
 

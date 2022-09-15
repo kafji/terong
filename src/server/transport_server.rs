@@ -1,7 +1,7 @@
 use crate::{
     protocol::{
-        ClientMessage, HelloMessage, HelloReply, HelloReplyError, HelloReplyMessage, InputEvent,
-        ServerMessage,
+        ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
+        UpgradeTransportRequest,
     },
     transport::{Certificate, PrivateKey, SingleCertVerifier, Transport},
 };
@@ -26,14 +26,6 @@ pub fn start(mut proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) -> JoinHan
 }
 
 async fn run(proto_event_rx: &mut mpsc::UnboundedReceiver<InputEvent>) -> Result<(), Error> {
-    let tls: TlsAcceptor = {
-        let cfg = ServerConfig::builder()
-            .with_safe_defaults()
-            .with_client_cert_verifier(Arc::new(SingleCertVerifier::new(vec![todo!()].into())))
-            .with_single_cert(todo!(), todo!())?;
-        Arc::new(cfg).into()
-    };
-
     let server_addr: SocketAddr = "0.0.0.0:3000".parse().context("invalid socket address")?;
 
     info!("listening at {}", server_addr);
@@ -113,7 +105,7 @@ where
                 // both server and client. In other words, we assume different protocol for each
                 // version.
                 let msg: ServerMessage = if client_version == env!("CARGO_PKG_VERSION") {
-                    let reply: HelloReply = HelloReplyMessage {
+                    let reply: HelloReply = UpgradeTransportRequest {
                         server_tls_cert: self.server_tls_cert.clone(),
                     }
                     .into();
