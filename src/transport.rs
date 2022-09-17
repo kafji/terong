@@ -13,7 +13,6 @@ use rustls::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{convert::TryInto, fmt::Debug, marker::PhantomData, time::SystemTime};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio_rustls::TlsStream;
 use tracing::debug;
 
 /// Protocol message marker trait.
@@ -166,7 +165,7 @@ where
 
 /// Facilitates acquiring and upgrading [Transport].
 #[derive(Debug)]
-pub enum Transporter<PS /* plain text stream */, SS /* secure stream */, IN, OUT> {
+pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
     PlainText(Transport<PS, IN, OUT>),
     Secure(Transport<SS, IN, OUT>),
 }
@@ -178,9 +177,9 @@ where
     IN: Debug,
     OUT: Debug,
 {
-    /// Mutably borrow plain text transport.
-    pub fn plain_text(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
-        if let Self::PlainText(t) = &mut self {
+    /// Mutably borrow plain transport.
+    pub fn plain(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
+        if let Self::PlainText(t) = self {
             Ok(t)
         } else {
             bail!("expecting plain text transport, but was {:?}", self)
@@ -204,7 +203,7 @@ where
 
     /// Mutably borrow secure transport.
     pub fn secure(&mut self) -> Result<&mut Transport<SS, IN, OUT>, Error> {
-        if let Self::Secure(t) = &mut self {
+        if let Self::Secure(t) = self {
             Ok(t)
         } else {
             bail!("expecting secure transport, but was {:?}", self)

@@ -47,7 +47,7 @@ async fn run_client(event_tx: &mut mpsc::UnboundedSender<InputEvent>) -> Result<
     loop {
         state = match state {
             State::Handshaking { client_version } => {
-                let transport = transporter.plain_text()?;
+                let transport = transporter.plain()?;
 
                 let msg = HelloMessage { client_version };
                 transport.send_msg(msg).await?;
