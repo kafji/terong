@@ -134,8 +134,11 @@ async fn run_session(
                 }
 
                 // request upgrade transport
-                let server_tls_cert = cert.serialize_der().unwrap().into();
-                let msg: HelloReply = UpgradeTransportRequest { server_tls_cert }.into();
+                let server_tls_cert: Certificate = cert.serialize_der().unwrap().into();
+                let msg: HelloReply = UpgradeTransportRequest {
+                    server_tls_cert: server_tls_cert.clone(),
+                }
+                .into();
                 transport.send_msg(msg.into()).await?;
 
                 // wait for upgrade transport reply
@@ -157,7 +160,9 @@ async fn run_session(
                 } else {
                     let server_tls_key = cert.serialize_private_key_der().into();
                     transporter = transporter
-                        .upgrade(|stream| upgrade_stream(stream, server_tls_key, client_tls_cert))
+                        .upgrade(|stream| {
+                            upgrade_stream(stream, server_tls_cert, server_tls_key, client_tls_cert)
+                        })
                         .await?;
                 }
 
@@ -199,6 +204,7 @@ type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMess
 
 pub async fn upgrade_stream<S>(
     stream: S,
+    server_tls_cert: Certificate,
     server_tls_key: PrivateKey,
     client_tls_cert: Certificate,
 ) -> Result<TlsStream<S>, Error>
@@ -207,11 +213,14 @@ where
 {
     let tls: TlsAcceptor = {
         let client_cert_verifier = Arc::new(SingleCertVerifier::new(client_tls_cert));
-        let key = rustls::PrivateKey(server_tls_key.into());
+
+        let server_cert = rustls::Certificate(server_tls_cert.into());
+        let server_private_key = rustls::PrivateKey(server_tls_key.into());
+
         let cfg = ServerConfig::builder()
             .with_safe_defaults()
             .with_client_cert_verifier(client_cert_verifier)
-            .with_single_cert(vec![], key)
+            .with_single_cert(vec![server_cert], server_private_key)
             .context("failed to create server config tls")?;
         Arc::new(cfg).into()
     };

@@ -99,6 +99,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                         .upgrade(|stream| async move {
                             upgrade_stream(
                                 stream,
+                                client_tls_cert,
                                 client_tls_key,
                                 server_tls_cert,
                                 server_addr.ip(),
@@ -147,6 +148,7 @@ pub enum State {
 
 pub async fn upgrade_stream<S>(
     stream: S,
+    client_tls_cert: Certificate,
     client_tls_key: PrivateKey,
     server_tls_cert: Certificate,
     server_addr: IpAddr,
@@ -155,12 +157,15 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let tls: TlsConnector = {
-        let cert_verifier = Arc::new(SingleCertVerifier::new(server_tls_cert));
-        let private_key = rustls::PrivateKey(client_tls_key.into());
+        let server_cert_verifier = Arc::new(SingleCertVerifier::new(server_tls_cert));
+
+        let client_cert = rustls::Certificate(client_tls_cert.into());
+        let client_private_key = rustls::PrivateKey(client_tls_key.into());
+
         let cfg = ClientConfig::builder()
             .with_safe_defaults()
-            .with_custom_certificate_verifier(cert_verifier)
-            .with_single_cert(vec![], private_key)
+            .with_custom_certificate_verifier(server_cert_verifier)
+            .with_single_cert(vec![client_cert], client_private_key)
             .context("failed to create client config tls")?;
         Arc::new(cfg).into()
     };
