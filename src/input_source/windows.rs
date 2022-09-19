@@ -19,21 +19,15 @@ use windows::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
-        UI::{
-            Input::KeyboardAndMouse::{
-                VK_LCONTROL, VK_LMENU, VK_RCONTROL, VK_RETURN, VK_RMENU, VK_SPACE,
-            },
-            WindowsAndMessaging::{
-                CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorInfo,
-                GetMessageW, PostMessageW, RegisterClassExW, SetCursorPos, SetWindowsHookExW,
-                ShowCursor, ShowWindow, SystemParametersInfoW, UnhookWindowsHookEx, CURSORINFO,
-                CW_USEDEFAULT, HCURSOR, HC_ACTION, HHOOK, HICON, KBDLLHOOKSTRUCT, MSG,
-                MSLLHOOKSTRUCT, SHOW_WINDOW_CMD, SPI_GETWORKAREA,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_APP, WM_CREATE, WM_DWMNCRENDERINGCHANGED, WM_GETMINMAXINFO,
-                WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCALCSIZE,
-                WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WNDCLASS_STYLES,
-            },
+        UI::WindowsAndMessaging::{
+            CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
+            PostMessageW, RegisterClassExW, SetCursorPos, SetWindowsHookExW, ShowWindow,
+            SystemParametersInfoW, UnhookWindowsHookEx, CW_USEDEFAULT, HCURSOR, HC_ACTION, HHOOK,
+            HICON, KBDLLHOOKSTRUCT, KF_REPEAT, MSG, MSLLHOOKSTRUCT, SHOW_WINDOW_CMD,
+            SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL,
+            WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CREATE, WM_DWMNCRENDERINGCHANGED,
+            WM_GETMINMAXINFO, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+            WM_NCCALCSIZE, WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WNDCLASS_STYLES,
         },
     },
 };
@@ -136,6 +130,8 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
         ShowWindow(window, SHOW_WINDOW_CMD::default());
     }
 
+    let mut previous_event = None;
+
     loop {
         let mut msg = MSG::default();
         let ok = unsafe { GetMessageW(&mut msg, window, 0, 0) };
@@ -160,8 +156,19 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         let ptr_event = msg.lParam.0 as *mut LocalInputEvent;
                         // acquire input event, the box will ensure it will be freed
                         let event = *unsafe { Box::from_raw(ptr_event) };
+
+                        let event2 = match (previous_event, &event) {
+                            (
+                                Some(LocalInputEvent::KeyDown { key: prev_key }),
+                                LocalInputEvent::KeyDown { key },
+                            ) if prev_key == *key => LocalInputEvent::KeyRepeat { key: prev_key },
+                            _ => event,
+                        };
+
+                        previous_event = Some(event);
+
                         // propagate input event to the sink
-                        let should_capture = controller.on_input_event(event).unwrap();
+                        let should_capture = controller.on_input_event(event2).unwrap();
                         set_should_capture_flag(should_capture);
                     }
                     _ => unsafe {
@@ -272,7 +279,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     // debug!("received keyboard hook event {:?}", hook_event);
 
     // map hook event to input event
-    let key = VkCode(hook_event.vkCode).into();
+    let key = KeyCode::from_u16(hook_event.vkCode as _).unwrap();
     let event = match wparam.0 as u32 {
         WM_KEYDOWN => LocalInputEvent::KeyDown { key }.into(),
         WM_KEYUP => LocalInputEvent::KeyUp { key }.into(),
@@ -305,34 +312,4 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
 
     // passthrough
     unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
-}
-
-/// Type to aid conversion from Windows' virtual key code to app's key code.
-struct VkCode(u32);
-
-impl Into<KeyCode> for VkCode {
-    fn into(self) -> KeyCode {
-        let vk_code = self.0 as u16;
-        // https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
-        match vk_code {
-            n if n == VK_SPACE.0 => KeyCode::Space,
-            n if n == VK_RETURN.0 => KeyCode::Enter,
-            0x41..=0x5A => {
-                let key_a = KeyCode::A as u16;
-                let key = if key_a < 0x41 {
-                    let d = 0x41 - key_a;
-                    vk_code - d
-                } else {
-                    let d = key_a - 0x41;
-                    vk_code + d
-                };
-                KeyCode::from_repr(key as _).unwrap()
-            }
-            n if n == VK_LCONTROL.0 => KeyCode::LeftCtrl,
-            n if n == VK_RCONTROL.0 => KeyCode::RightCtrl,
-            n if n == VK_LMENU.0 => KeyCode::LeftAlt,
-            n if n == VK_RMENU.0 => KeyCode::RightAlt,
-            n => todo!(),
-        }
-    }
 }

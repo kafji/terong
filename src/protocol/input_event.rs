@@ -141,7 +141,7 @@ pub enum KeyCode {
 }
 
 /// Define a bidirectional conversion.
-macro_rules! define_injection {
+macro_rules! define_conversion {
     ($l_ty:ty, $r_ty:ty, { $($l_var:ident => $r_var:ident,)* }) => {
         impl Into<$r_ty> for $l_ty {
             fn into(self) -> $r_ty {
@@ -166,6 +166,35 @@ macro_rules! define_injection {
             }
         }
     };
+
+    (
+        $l_ty:ty,
+        $r_ty:ty,
+        {
+            $($l_var:ident = $r_var:expr,)*
+        }
+    ) => {
+        impl Into<$r_ty> for $l_ty {
+            fn into(self) -> $r_ty {
+                use $l_ty::*;
+                match self {
+                    $($l_var => $r_var,)*
+                }
+            }
+        }
+
+        paste::paste! {
+            impl $l_ty {
+                pub fn [<from_$r_ty:lower>](x: $r_ty) -> Option<Self> {
+                    use $l_ty::*;
+                    match x {
+                        $(x if x == $r_var => Some($l_var),)*
+                        _ => None,
+                    }
+                }
+            }
+        }
+    };
 }
 
 #[cfg(target_os = "linux")]
@@ -173,7 +202,7 @@ mod linux {
     use super::*;
     use evdev_rs::enums::EV_KEY;
 
-    define_injection!(KeyCode, EV_KEY, {
+    define_conversion!(KeyCode, EV_KEY, {
         Escape => KEY_ESC,
 
         F1 => KEY_F1,
@@ -282,11 +311,127 @@ mod linux {
         Right => KEY_RIGHT,
     });
 
-    define_injection!(MouseButton, EV_KEY, {
+    define_conversion!(MouseButton, EV_KEY, {
         Left => BTN_LEFT,
         Right => BTN_RIGHT,
         Middle => BTN_MIDDLE,
         Mouse4 => BTN_4,
         Mouse5 => BTN_5,
+    });
+}
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use super::*;
+    use ::windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+    // https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+    define_conversion!(KeyCode, u16, {
+        Escape = VK_ESCAPE.0,
+
+        F1 = VK_F1.0,
+        F2 = VK_F2.0,
+        F3 = VK_F3.0,
+        F4 = VK_F4.0,
+        F5 = VK_F5.0,
+        F6 = VK_F6.0,
+        F7 = VK_F7.0,
+        F8 = VK_F8.0,
+        F9 = VK_F9.0,
+        F10 = VK_F10.0,
+        F11 = VK_F11.0,
+        F12 = VK_F12.0,
+
+        PrintScreen = VK_SNAPSHOT.0,
+        ScrollLock = VK_SCROLL.0,
+        PauseBreak = VK_PAUSE.0,
+
+        Grave = VK_OEM_3.0,
+
+        D1 = 0x31,
+        D2 = 0x32,
+        D3 = 0x33,
+        D4 = 0x34,
+        D5 = 0x35,
+        D6 = 0x36,
+        D7 = 0x37,
+        D8 = 0x38,
+        D9 = 0x39,
+        D0 = 0x30,
+
+        Minus = VK_OEM_MINUS.0,
+        Equal = VK_OEM_PLUS.0,
+
+        A = 0x41,
+        B = 0x42,
+        C = 0x43,
+        D = 0x44,
+        E = 0x45,
+        F = 0x46,
+        G = 0x47,
+        H = 0x48,
+        I = 0x49,
+        J = 0x4A,
+        K = 0x4B,
+        L = 0x4C,
+        M = 0x4D,
+        N = 0x4E,
+        O = 0x4F,
+        P = 0x50,
+        Q = 0x51,
+        R = 0x52,
+        S = 0x53,
+        T = 0x54,
+        U = 0x55,
+        V = 0x56,
+        W = 0x57,
+        X = 0x58,
+        Y = 0x59,
+        Z = 0x5A,
+
+        LeftBrace = VK_OEM_4.0,
+        RightBrace = VK_OEM_6.0,
+
+        SemiColon = VK_OEM_1.0,
+        Apostrophe = VK_OEM_7.0,
+
+        Comma = VK_OEM_COMMA.0,
+        Dot = VK_OEM_PERIOD.0,
+        Slash = VK_OEM_2.0,
+
+        Backspace = VK_BACK.0,
+        BackSlash = VK_OEM_5.0,
+        Enter = VK_RETURN.0,
+
+        Space = VK_SPACE.0,
+
+        Tab = VK_TAB.0,
+        CapsLock = VK_CAPITAL.0,
+
+        LeftShift = VK_LSHIFT.0,
+        RightShift = VK_RSHIFT.0,
+
+        LeftCtrl = VK_LCONTROL.0,
+        RightCtrl = VK_RCONTROL.0,
+
+        LeftAlt = VK_LMENU.0,
+        RightAlt = VK_RMENU.0,
+
+        LeftMeta = VK_LWIN.0,
+        RightMeta = VK_RWIN.0,
+
+        Insert = VK_INSERT.0,
+        Delete = VK_DELETE.0,
+
+        Home = VK_HOME.0,
+        End = VK_END.0,
+
+        PageUp = VK_PRIOR.0,
+        PageDown = VK_NEXT.0,
+
+        Up = VK_UP.0,
+        Left = VK_LEFT.0,
+        Down = VK_DOWN.0,
+        Right = VK_RIGHT.0,
     });
 }
