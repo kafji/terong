@@ -138,8 +138,7 @@ where
     /// Sends a protocol message.
     ///
     /// This method is not cancel safe.
-    pub async fn send_msg<'a>(&mut self, msg: impl Into<OUT>) -> Result<(), Error> {
-        let msg = msg.into();
+    pub async fn send_msg<'a>(&mut self, msg: OUT) -> Result<(), Error> {
         send_msg(&mut self.stream, &msg).await
     }
 }
@@ -174,20 +173,20 @@ pub trait Messenger {
 #[async_trait]
 impl<T, IN, OUT> Messenger for Transport<T, IN, OUT>
 where
-    T: Send,
-    IN: Message + Send,
-    OUT: Message + Send,
+    T: AsyncRead + AsyncWrite + Unpin + Send,
+    IN: Message + Debug + Send,
+    OUT: Message + Debug + Send + Sync,
 {
     type In = IN;
     type Out = OUT;
 
     async fn recv_msg(&mut self) -> Result<Self::In, Error> {
-        let x = self.recv_msg().await?;
+        let x = Transport::recv_msg(self).await?;
         Ok(x)
     }
 
     async fn send_msg<'a>(&mut self, msg: Self::Out) -> Result<(), Error> {
-        self.send_msg(msg).await?;
+        Transport::send_msg(self, msg).await?;
         Ok(())
     }
 }
@@ -201,10 +200,10 @@ pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
 
 impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT>
 where
-    PS: Debug + Send,
-    SS: Debug + Send,
+    PS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
+    SS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
     IN: Message + Debug + Send,
-    OUT: Message + Debug + Send,
+    OUT: Message + Debug + Send + Sync,
 {
     /// Mutably borrow plain transport.
     pub fn plain(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {

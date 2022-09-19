@@ -136,7 +136,7 @@ async fn run_session(
                 // request upgrade transport
                 let server_tls_cert = cert.serialize_der().unwrap().into();
                 let msg: HelloReply = UpgradeTransportRequest { server_tls_cert }.into();
-                transport.send_msg(msg).await?;
+                transport.send_msg(msg.into()).await?;
 
                 // wait for upgrade transport reply
                 let msg = transport.recv_msg().await?;

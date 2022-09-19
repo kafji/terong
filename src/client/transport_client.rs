@@ -21,7 +21,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub fn start(mut event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run_client(&mut event_tx).await.unwrap() })
@@ -55,6 +55,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
     };
 
     loop {
+        debug!(?state);
         state = match state {
             State::Handshaking => {
                 let transport = transporter.plain()?;
@@ -62,7 +63,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 // send hello message
                 let client_version = env!("CARGO_PKG_VERSION").into();
                 let msg = HelloMessage { client_version };
-                transport.send_msg(msg).await?;
+                transport.send_msg(msg.into()).await?;
 
                 // wait for hello reply
                 let msg = transport.recv_msg().await?;
@@ -86,7 +87,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 let msg = UpgradeTransportResponse {
                     client_tls_cert: client_tls_cert.clone(),
                 };
-                transport.send_msg(msg).await?;
+                transport.send_msg(msg.into()).await?;
 
                 // upgrade to tls
                 let no_tls = no_tls();
@@ -113,7 +114,11 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
             State::Idle => {
                 let messenger = transporter.any();
 
+                debug!(?state, "waiting for message");
                 let msg = messenger.recv_msg().await?;
+
+                debug!(?state, ?msg, "received message");
+
                 match msg {
                     ServerMessage::Event(event) => State::ReceivedEvent { event },
                     _ => bail!("received unexpected message, {:?}", msg),
