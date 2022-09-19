@@ -44,14 +44,25 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
         client_version: env!("CARGO_PKG_VERSION").into(),
     };
 
+    let cert = {
+        let mut params = rcgen::CertificateParams::default();
+        params
+            .subject_alt_names
+            .push(rcgen::SanType::IpAddress("".parse().unwrap()));
+        let cert = rcgen::Certificate::from_params(params).unwrap();
+        cert
+    };
+
     loop {
         state = match state {
             State::Handshaking { client_version } => {
                 let transport = transporter.plain()?;
 
+                // send hello message
                 let msg = HelloMessage { client_version };
                 transport.send_msg(msg).await?;
 
+                // wait for hello reply
                 let msg = transport.recv_msg().await?;
                 let server_tls_cert = match msg {
                     ServerMessage::HelloReply(reply) => match reply {
@@ -65,23 +76,20 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                     _ => bail!("received unexpected message, {:?}", msg),
                 };
 
-                let client_tls_cert = get_client_tls_cert().await?;
+                let client_tls_cert: Certificate = {
+                    let x = cert.serialize_der().unwrap();
+                    x.into()
+                };
                 let msg = UpgradeTransportResponse {
                     client_tls_cert: client_tls_cert.clone(),
                 };
                 transport.send_msg(msg).await?;
 
-                State::UpgradingTransport {
-                    server_tls_cert,
-                    client_tls_cert,
-                }
+                State::UpgradingTransport { server_tls_cert }
             }
 
-            State::UpgradingTransport {
-                server_tls_cert,
-                client_tls_cert,
-            } => {
-                let client_tls_key = get_client_tls_key().await?;
+            State::UpgradingTransport { server_tls_cert } => {
+                let client_tls_key = { cert.serialize_private_key_der().into() };
 
                 transporter = transporter
                     .upgrade(|stream| async move {
@@ -118,25 +126,10 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
 
 #[derive(Clone, Debug)]
 pub enum State {
-    Handshaking {
-        client_version: String,
-    },
-    UpgradingTransport {
-        server_tls_cert: Certificate,
-        client_tls_cert: Certificate,
-    },
+    Handshaking { client_version: String },
+    UpgradingTransport { server_tls_cert: Certificate },
     Idle,
-    ReceivedEvent {
-        event: InputEvent,
-    },
-}
-
-async fn get_client_tls_cert() -> Result<Certificate, Error> {
-    todo!()
-}
-
-async fn get_client_tls_key() -> Result<PrivateKey, Error> {
-    todo!()
+    ReceivedEvent { event: InputEvent },
 }
 
 pub async fn upgrade_stream<S>(
