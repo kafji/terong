@@ -21,7 +21,7 @@ use tokio::{
     task::{self, JoinHandle},
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::info;
+use tracing::{info, warn};
 
 pub fn start(mut event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run_client(&mut event_tx).await.unwrap() })
@@ -89,7 +89,10 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 transport.send_msg(msg).await?;
 
                 // upgrade to tls
-                if !no_tls() {
+                let no_tls = no_tls();
+                if no_tls {
+                    warn!("tls disabled")
+                } else {
                     let client_tls_key = { cert.serialize_private_key_der().into() };
                     transporter = transporter
                         .upgrade(|stream| async move {

@@ -17,7 +17,7 @@ use tokio::{
     task::{self, JoinError, JoinHandle},
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
-use tracing::info;
+use tracing::{info, warn};
 
 pub fn start(proto_event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run(proto_event_rx).await.unwrap() })
@@ -151,7 +151,10 @@ async fn run_session(
                     };
 
                 // upgrade to tls
-                if !no_tls() {
+                let no_tls = no_tls();
+                if no_tls {
+                    warn!("tls disabled");
+                } else {
                     let server_tls_key = cert.serialize_private_key_der().into();
                     transporter = transporter
                         .upgrade(|stream| upgrade_stream(stream, server_tls_key, client_tls_cert))
