@@ -1,13 +1,9 @@
 mod input_event;
 
-use crate::{impl_from, transport::Certificate};
-use anyhow::Error;
-use bytes::{Buf, BufMut, BytesMut};
-use futures::Future;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{convert::TryInto, fmt::Debug, marker::PhantomData};
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::debug;
+use crate::transport::Certificate;
+use macross::impl_from;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 pub use self::input_event::*;
 

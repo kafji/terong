@@ -1,41 +1,35 @@
-use super::event::LocalInputEvent;
-use crate::protocol::{KeyCode, MouseButton};
+use super::{controller::InputController, event::LocalInputEvent};
+use crate::protocol::{InputEvent, KeyCode, MouseButton};
 use anyhow::Error;
-use evdev_rs::{enums::EventCode, Device, GrabMode, InputEvent, ReadFlag};
+use evdev_rs::{enums::EventCode, Device, GrabMode, InputEvent as LinuxInputEvent, ReadFlag};
 use std::{
     fs::File,
     ops::{Deref, DerefMut},
-    path::Path,
-    sync::{Arc, Mutex},
 };
 use tokio::{
-    select,
-    sync::{mpsc, watch},
+    sync::mpsc,
     task::{self, JoinHandle},
 };
-use tracing::{info, warn};
+use tracing::warn;
 
-pub fn start(
-    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
-    capture_input_rx: watch::Receiver<bool>,
-) -> JoinHandle<()> {
-    task::spawn(async { run(input_event_tx, capture_input_rx).await.unwrap() })
+pub fn start(event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
+    run(event_tx)
 }
 
-/// RAII structure ensuring the device's grab mode will be set to ungrab when it
-/// is dropped.
+/// RAII 'smart pointer' ensuring the device's grab mode will be set to ungrab
+/// when it is dropped.
 #[derive(Debug)]
 struct DeviceGuard(Device);
-
-impl From<Device> for DeviceGuard {
-    fn from(x: Device) -> Self {
-        Self(x)
-    }
-}
 
 impl Drop for DeviceGuard {
     fn drop(&mut self) {
         self.0.grab(GrabMode::Ungrab).unwrap();
+    }
+}
+
+impl From<Device> for DeviceGuard {
+    fn from(x: Device) -> Self {
+        Self(x)
     }
 }
 
@@ -53,82 +47,48 @@ impl DerefMut for DeviceGuard {
     }
 }
 
-#[derive(Debug)]
-struct InputSource<D> {
-    dev: Arc<Mutex<D>>,
-}
-
-impl InputSource<DeviceGuard> {
-    async fn new(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let dev = task::block_in_place(|| {
-            let file = File::open(path)?;
-            let dev = Device::new_from_file(file)?;
-            Result::<_, Error>::Ok(DeviceGuard::from(dev))
-        })?;
-        let dev = Arc::new(Mutex::new(dev));
-        let s = Self { dev };
-        Ok(s)
-    }
-}
-
-impl<D> InputSource<D>
-where
-    D: DerefMut<Target = Device>,
-{
-    async fn set_capture_input(&mut self, x: bool) -> Result<(), Error> {
-        task::block_in_place(|| {
-            info!("setting capture input to {}", x);
-            let mode = if x { GrabMode::Grab } else { GrabMode::Ungrab };
-            let mut dev = self.dev.lock().unwrap();
-            dev.grab(mode)
-        })
-        .map_err(Into::into)
-    }
-
-    async fn read_event(&self) -> Result<LocalInputEvent, Error> {
-        task::block_in_place(|| {
-            let dev = self.dev.lock().unwrap();
-            let event = loop {
-                let (_, event) = dev.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
-                let event = linux_event_to_local_event(&event);
-                if let Some(event) = event {
-                    break event;
-                }
-            };
-            Ok(event)
-        })
-    }
-}
-
-async fn run(
-    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
-    mut capture_input_rx: watch::Receiver<bool>,
-) -> Result<(), Error> {
-    let mut source = InputSource::new("/dev/input/event3").await?;
+fn read_input_source(device: &mut Device, controller: &mut InputController) -> Result<(), Error> {
     loop {
-        select! { biased;
-            x = capture_input_rx.changed() => {
-                match x {
-                    Ok(_) => {
-                        let flag = *capture_input_rx.borrow();
-                        source.set_capture_input(flag).await?;
-                    },
-                    Err(_) => break,
-                }
-            }
-            x = source.read_event() => {
-                let event = x?;
-                if let Err(_) = input_event_tx.send(event) {
-                    break;
-                }
-            }
+        let (_, event) = device.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
+        let event = linux_event_to_local_event(&event);
+        if let Some(event) = event {
+            let should_capture = controller.on_input_event(event)?;
+            set_capture_input(device, should_capture)?;
         }
     }
-    Ok(())
 }
 
-fn linux_event_to_local_event(x: &InputEvent) -> Option<LocalInputEvent> {
-    let InputEvent {
+fn set_capture_input(device: &mut Device, flag: bool) -> Result<(), Error> {
+    let mode = if flag {
+        GrabMode::Grab
+    } else {
+        GrabMode::Ungrab
+    };
+    device.grab(mode).map_err(Into::into)
+}
+
+fn run(event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
+    run2(event_tx).unwrap()
+}
+
+fn run2(event_tx: mpsc::Sender<InputEvent>) -> Result<JoinHandle<()>, Error> {
+    let mut controller = InputController::new(event_tx);
+
+    let mut device = {
+        let file = File::open("/dev/input/event3")?;
+        let dev = Device::new_from_file(file)?;
+        DeviceGuard::from(dev)
+    };
+
+    let input_source_handler = task::spawn_blocking(move || {
+        read_input_source(&mut device, &mut controller).unwrap();
+    });
+
+    Ok(input_source_handler)
+}
+
+fn linux_event_to_local_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
+    let LinuxInputEvent {
         event_code, value, ..
     } = x;
     match event_code {

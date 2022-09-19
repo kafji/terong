@@ -55,17 +55,17 @@ impl Drop for Unhooker {
 }
 
 pub fn start(
-    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
+    input_event_tx: mpsc::Sender<LocalInputEvent>,
     capture_input_rx: watch::Receiver<bool>,
 ) -> task::JoinHandle<()> {
     task::spawn(run(input_event_tx, capture_input_rx))
 }
 
 async fn run(
-    input_event_tx: mpsc::UnboundedSender<LocalInputEvent>,
+    input_event_tx: mpsc::Sender<LocalInputEvent>,
     mut capture_input_rx: watch::Receiver<bool>,
 ) {
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let (event_tx, mut event_rx) = mpsc::channel(1);
 
     let listener = thread::Builder::new()
         .name("input-listener".to_owned())
@@ -85,7 +85,7 @@ async fn run(
             x = event_rx.recv() => {
                 match x {
                     Some(event) => {
-                        if let Err(_) = input_event_tx.send(event) {
+                        if let Err(_) = input_event_tx.send(event).await {
                             break;
                         }
                     }

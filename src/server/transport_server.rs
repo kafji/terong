@@ -1,32 +1,28 @@
 use crate::{
     protocol::{
-        ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
+        ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage,
         UpgradeTransportRequest, UpgradeTransportResponse,
     },
     transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
 };
 use anyhow::{Context, Error};
 use futures::{future, FutureExt};
-use std::{
-    fmt::Debug,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{fmt::Debug, net::SocketAddr, sync::Arc};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
     select,
-    sync::mpsc,
-    task::{self, JoinHandle},
+    sync::mpsc::{self, error::SendError},
+    task::{self, JoinError, JoinHandle},
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
-use tracing::{debug, info};
+use tracing::info;
 
-pub fn start(proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) -> JoinHandle<()> {
+pub fn start(proto_event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run(proto_event_rx).await.unwrap() })
 }
 
-async fn run(mut event_rx: mpsc::UnboundedReceiver<InputEvent>) -> Result<(), Error> {
+async fn run(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
     let server_addr: SocketAddr = "0.0.0.0:3000".parse().context("invalid socket address")?;
 
     info!("listening at {}", server_addr);
@@ -37,33 +33,34 @@ async fn run(mut event_rx: mpsc::UnboundedReceiver<InputEvent>) -> Result<(), Er
     loop {
         let finished = session_handler
             .as_mut()
-            .map(|x| x.finish().boxed())
+            .map(|x| x.finished().boxed())
             .unwrap_or_else(|| future::pending().boxed());
 
         select! { biased;
-            _ = finished => {
 
+            // check if session is finished if it's exist
+            x = finished => {
+                x?;
+                session_handler.take();
             }
-            _ = event_rx.recv() => {
 
-            }
-
-            conn = listener.accept() => {
-                let (stream, peer_addr) = conn?;
-            }
-        }
-        let (stream, peer_addr) = listener.accept().await?;
-        match &mut session_handler {
-            Some(session_handler) => {
-                if session_handler.is_finished() {
-                    session_handler.finish().await?;
-                } else {
-                    info!("already have active session");
+            // propagate to session if it's exist
+            event = event_rx.recv() => {
+                match (event, &mut session_handler) {
+                    (Some(event), Some(session)) => { session.send_event(event).await.ok(); },
+                    (None, _) => break,
+                    _ => (),
                 }
             }
-            None => {
-                let transporter = Transporter::PlainText(Transport::new(stream));
-                session_handler = Some(start_session(transporter));
+
+            // handle incoming connection, create a new session if it's not exist
+            conn = listener.accept() => {
+                let (stream, _) = conn?;
+                if session_handler.is_none() {
+                    let transporter = Transporter::Plain(Transport::new(stream));
+                    let handler = create_session(transporter);
+                    session_handler = Some(handler);
+                }
             }
         }
     }
@@ -71,36 +68,38 @@ async fn run(mut event_rx: mpsc::UnboundedReceiver<InputEvent>) -> Result<(), Er
     Ok(())
 }
 
+/// Handler to a session.
+#[derive(Debug)]
 struct SessionHandler {
-    event_tx: mpsc::UnboundedSender<InputEvent>,
+    event_tx: mpsc::Sender<InputEvent>,
     task: JoinHandle<()>,
 }
 
 impl SessionHandler {
-    async fn send_event(&mut self, event: InputEvent) -> Result<(), Error> {
-        self.event_tx.send(event);
+    /// Send input event to this session.
+    async fn send_event(&mut self, event: InputEvent) -> Result<(), SendError<InputEvent>> {
+        self.event_tx.send(event).await?;
         Ok(())
     }
 
-    fn is_finished(&mut self) -> bool {
-        self.task.is_finished()
-    }
-
-    async fn finish(&mut self) -> Result<(), Error> {
+    /// This method is cancel safe.
+    async fn finished(&mut self) -> Result<(), JoinError> {
         (&mut self.task).await?;
         Ok(())
     }
 }
 
-fn start_session(transporter: ServerTransporter) -> SessionHandler {
-    let (event_tx, event_rx) = mpsc::unbounded_channel();
+/// Creates a new session.
+fn create_session(transporter: ServerTransporter) -> SessionHandler {
+    let (event_tx, event_rx) = mpsc::channel(1);
     let task = task::spawn(async move { run_session(transporter, event_rx).await.unwrap() });
     SessionHandler { event_tx, task }
 }
 
+/// The session loop.
 async fn run_session(
     mut transporter: ServerTransporter,
-    mut event_rx: mpsc::UnboundedReceiver<InputEvent>,
+    mut event_rx: mpsc::Receiver<InputEvent>,
 ) -> Result<(), Error> {
     let mut state = State::Handshaking;
 
@@ -166,6 +165,7 @@ async fn run_session(
             }
         }
     }
+
     Result::<_, Error>::Ok(())
 }
 
@@ -178,12 +178,6 @@ enum State {
 }
 
 type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
-
-#[derive(Debug)]
-struct Session {
-    transporter: Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>,
-    event_rx: mpsc::UnboundedReceiver<InputEvent>,
-}
 
 pub async fn upgrade_stream<S>(
     stream: S,

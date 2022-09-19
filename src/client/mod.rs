@@ -8,7 +8,7 @@ use tracing::info;
 pub async fn run() {
     info!("starting client");
 
-    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel(1);
 
     let client = transport_client::start(event_tx.clone());
 

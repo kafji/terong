@@ -1,3 +1,4 @@
+mod controller;
 pub mod event;
 
 use cfg_if::cfg_if;

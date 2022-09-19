@@ -1,7 +1,7 @@
 use crate::protocol::{InputEvent, KeyCode, MouseButton};
 use anyhow::{anyhow, Error};
 use evdev_rs::{
-    enums::{BusType, EventCode, EventType, EV_KEY, EV_REL, EV_SYN},
+    enums::{BusType, EventCode, EventType, EV_REL, EV_SYN},
     DeviceWrapper, InputEvent as LinuxInputEvent, UInputDevice, UninitDevice,
 };
 use std::{convert::TryInto, iter, time::SystemTime};
@@ -11,12 +11,10 @@ use tokio::{
     task::{self, JoinHandle},
 };
 
-pub fn start(proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) -> JoinHandle<()> {
-    task::spawn(run(proto_event_rx))
-}
-
-async fn run(proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) {
-    run_consumer(proto_event_rx).await.unwrap()
+pub fn start(event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
+    task::spawn_blocking(|| {
+        run_input_sink(event_rx).unwrap();
+    })
 }
 
 // useful documentations:
@@ -28,9 +26,7 @@ async fn run(proto_event_rx: mpsc::UnboundedReceiver<InputEvent>) {
 // https://github.com/ndesh26/evdev-rs/issues/75
 // https://github.com/ndesh26/evdev-rs/pull/76
 
-async fn run_consumer(
-    mut proto_event_rx: mpsc::UnboundedReceiver<InputEvent>,
-) -> Result<(), Error> {
+fn create_virtual_device() -> Result<UninitDevice, Error> {
     let dev =
         UninitDevice::new().ok_or_else(|| anyhow!("failed to create virtual evdev device"))?;
 
@@ -41,10 +37,12 @@ async fn run_consumer(
     dev.enable_event_code(&EventCode::EV_SYN(EV_SYN::SYN_REPORT), None)?;
 
     dev.enable_event_type(&EventType::EV_KEY)?;
+
     for btn in MouseButton::iter() {
         let key = btn.into();
         dev.enable_event_code(&EventCode::EV_KEY(key), None)?;
     }
+
     for key in KeyCode::iter() {
         let key = key.into();
         dev.enable_event_code(&EventCode::EV_KEY(key), None)?;
@@ -54,23 +52,27 @@ async fn run_consumer(
     dev.enable_event_code(&EventCode::EV_REL(EV_REL::REL_X), None)?;
     dev.enable_event_code(&EventCode::EV_REL(EV_REL::REL_Y), None)?;
 
+    Ok(dev)
+}
+
+fn run_input_sink(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
+    let dev = create_virtual_device()?;
+
     let uidev = UInputDevice::create_from_device(&dev)?;
 
-    while let Some(ie) = proto_event_rx.recv().await {
-        let es: Vec<LinuxInputEvent> = ie.try_into()?;
-        task::block_in_place(|| {
-            for e in &es {
-                uidev.write_event(&e)?;
-            }
-            Result::<_, Error>::Ok(())
-        })?;
+    while let Some(event) = event_rx.blocking_recv() {
+        let events: Vec<LinuxInputEvent> = event.try_into()?;
+
+        for e in &events {
+            uidev.write_event(&e)?;
+        }
     }
 
     Ok(())
 }
 
 impl TryInto<Vec<LinuxInputEvent>> for InputEvent {
-    type Error = anyhow::Error;
+    type Error = Error;
     fn try_into(self) -> Result<Vec<LinuxInputEvent>, Self::Error> {
         let time = SystemTime::now().try_into()?;
 

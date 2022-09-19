@@ -1,10 +1,8 @@
-use crate::{
-    newtype,
-    protocol::{ClientMessage, ServerMessage},
-};
+use crate::protocol::{ClientMessage, ServerMessage};
 use anyhow::{bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
+use macross::newtype;
 use rustls::{
     client::{ServerCertVerified, ServerCertVerifier},
     server::{ClientCertVerified, ClientCertVerifier},
@@ -166,7 +164,7 @@ where
 /// Facilitates acquiring and upgrading [Transport].
 #[derive(Debug)]
 pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
-    PlainText(Transport<PS, IN, OUT>),
+    Plain(Transport<PS, IN, OUT>),
     Secure(Transport<SS, IN, OUT>),
 }
 
@@ -179,7 +177,7 @@ where
 {
     /// Mutably borrow plain transport.
     pub fn plain(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
-        if let Self::PlainText(t) = self {
+        if let Self::Plain(t) = self {
             Ok(t)
         } else {
             bail!("expecting plain text transport, but was {:?}", self)
@@ -193,7 +191,7 @@ where
         Fut: Future<Output = Result<SS, Error>>,
     {
         match self {
-            Self::PlainText(t) => {
+            Self::Plain(t) => {
                 let t = t.try_map_stream(upgrader).await?;
                 Ok(Self::Secure(t))
             }
@@ -214,13 +212,13 @@ where
 newtype! {
     /// TLS certificate.
     #[derive(Clone, Serialize, Deserialize, Debug)]
-    pub Certificate = Vec<u8>
+    pub Certificate = Vec<u8>;
 }
 
 newtype! {
     /// TLS private key.
     #[derive(Clone, Debug)]
-    pub PrivateKey = Vec<u8>
+    pub PrivateKey = Vec<u8>;
 }
 
 /// Certifier for a single known certificate.
@@ -239,11 +237,11 @@ impl ServerCertVerifier for SingleCertVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &rustls::Certificate,
-        intermediates: &[rustls::Certificate],
-        server_name: &ServerName,
-        scts: &mut dyn Iterator<Item = &[u8]>,
-        ocsp_response: &[u8],
-        now: SystemTime,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: SystemTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         if &end_entity.0 == self.cert.as_ref() {
             Ok(ServerCertVerified::assertion())
@@ -261,8 +259,8 @@ impl ClientCertVerifier for SingleCertVerifier {
     fn verify_client_cert(
         &self,
         end_entity: &rustls::Certificate,
-        intermediates: &[rustls::Certificate],
-        now: SystemTime,
+        _intermediates: &[rustls::Certificate],
+        _now: SystemTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
         if &end_entity.0 == self.cert.as_ref() {
             Ok(ClientCertVerified::assertion())

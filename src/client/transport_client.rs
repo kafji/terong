@@ -20,11 +20,11 @@ use tokio::{
 use tokio_rustls::{TlsConnector, TlsStream};
 use tracing::info;
 
-pub fn start(mut event_tx: mpsc::UnboundedSender<InputEvent>) -> JoinHandle<()> {
+pub fn start(mut event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run_client(&mut event_tx).await.unwrap() })
 }
 
-async fn run_client(event_tx: &mut mpsc::UnboundedSender<InputEvent>) -> Result<(), Error> {
+async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error> {
     let server_addr: SocketAddr = "192.168.123.31:3000"
         .parse()
         .context("invalid server address")?;
@@ -38,7 +38,7 @@ async fn run_client(event_tx: &mut mpsc::UnboundedSender<InputEvent>) -> Result<
     info!("connected to {}", server_addr);
 
     let mut transporter: Transporter<_, _, ServerMessage, ClientMessage> =
-        Transporter::PlainText(Transport::new(stream));
+        Transporter::Plain(Transport::new(stream));
 
     let mut state = State::Handshaking {
         client_version: env!("CARGO_PKG_VERSION").into(),
@@ -104,7 +104,7 @@ async fn run_client(event_tx: &mut mpsc::UnboundedSender<InputEvent>) -> Result<
             }
 
             State::ReceivedEvent { event } => {
-                if let Err(_) = event_tx.send(event) {
+                if let Err(_) = event_tx.send(event).await {
                     break;
                 }
 
