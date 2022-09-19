@@ -199,12 +199,16 @@ where
 {
     let tls: TlsAcceptor = {
         let client_cert_verifier = Arc::new(SingleCertVerifier::new(client_tls_cert));
+        let key = rustls::PrivateKey(server_tls_key.into());
         let cfg = ServerConfig::builder()
             .with_safe_defaults()
             .with_client_cert_verifier(client_cert_verifier)
-            .with_single_cert(vec![], rustls::PrivateKey(server_tls_key.into()))?;
+            .with_single_cert(vec![], key)
+            .context("failed to create server config tls")?;
         Arc::new(cfg).into()
     };
-    let stream = tls.accept(stream).await?;
+
+    let stream = tls.accept(stream).await.context("tls accept failed")?;
+
     Ok(stream.into())
 }
