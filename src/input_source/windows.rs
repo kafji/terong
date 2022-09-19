@@ -1,18 +1,16 @@
 use super::event::{LocalInputEvent, MousePosition};
-use crate::protocol::{KeyCode, MouseButton};
+use crate::{
+    input_source::controller::InputController,
+    protocol::{InputEvent, KeyCode, MouseButton},
+};
 use once_cell::sync::OnceCell;
 use std::{
     ffi::c_void,
     mem,
     ptr::null,
     sync::atomic::{AtomicBool, Ordering},
-    thread,
 };
-use tokio::{
-    select,
-    sync::{mpsc, watch},
-    task,
-};
+use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
 use windows::{
     core::PCWSTR,
@@ -54,51 +52,8 @@ impl Drop for Unhooker {
     }
 }
 
-pub fn start(
-    input_event_tx: mpsc::Sender<LocalInputEvent>,
-    capture_input_rx: watch::Receiver<bool>,
-) -> task::JoinHandle<()> {
-    task::spawn(run(input_event_tx, capture_input_rx))
-}
-
-async fn run(
-    input_event_tx: mpsc::Sender<LocalInputEvent>,
-    mut capture_input_rx: watch::Receiver<bool>,
-) {
-    let (event_tx, mut event_rx) = mpsc::channel(1);
-
-    let listener = thread::Builder::new()
-        .name("input-listener".to_owned())
-        .spawn(move || run_listener(event_tx))
-        .expect("failed to spawn input listener thread");
-
-    loop {
-        select! {
-            _ = input_event_tx.closed() => {
-                break;
-            }
-            _ = capture_input_rx.changed() => {
-                let flag = *capture_input_rx.borrow();
-                debug!("setting should capture flag to {}", flag);
-                set_should_capture_flag(flag);
-            }
-            x = event_rx.recv() => {
-                match x {
-                    Some(event) => {
-                        if let Err(_) = input_event_tx.send(event).await {
-                            break;
-                        }
-                    }
-                    None => break,
-                }
-
-            }
-        }
-    }
-
-    drop(event_rx);
-
-    listener.join().unwrap();
+pub fn start(event_tx: mpsc::Sender<InputEvent>) -> task::JoinHandle<()> {
+    task::spawn_blocking(|| run_input_source(event_tx))
 }
 
 #[repr(u32)]
@@ -107,7 +62,9 @@ enum MessageCode {
     InputEvent = WM_APP,
 }
 
-fn run_listener(event_sink: mpsc::UnboundedSender<LocalInputEvent>) {
+fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
+    let mut controller = InputController::new(event_tx);
+
     unsafe {
         let mut rect = RECT::default();
         let ptr_rect = &mut rect as *mut _ as *mut c_void;
@@ -204,10 +161,8 @@ fn run_listener(event_sink: mpsc::UnboundedSender<LocalInputEvent>) {
                         // acquire input event, the box will ensure it will be freed
                         let event = *unsafe { Box::from_raw(ptr_event) };
                         // propagate input event to the sink
-                        if let Err(_) = event_sink.send(event) {
-                            debug!("event sink was closed");
-                            break;
-                        }
+                        let should_capture = controller.on_input_event(event).unwrap();
+                        set_should_capture_flag(should_capture);
                     }
                     _ => unsafe {
                         debug!("dispatching message {:?}", msg);
@@ -225,11 +180,11 @@ static CENTRE_POS: OnceCell<(i32, i32)> = OnceCell::new();
 static SHOULD_CAPTURE: AtomicBool = AtomicBool::new(false);
 
 fn should_capture() -> bool {
-    SHOULD_CAPTURE.load(Ordering::Relaxed)
+    SHOULD_CAPTURE.load(Ordering::SeqCst)
 }
 
 fn set_should_capture_flag(x: bool) {
-    SHOULD_CAPTURE.store(x, Ordering::Relaxed)
+    SHOULD_CAPTURE.store(x, Ordering::SeqCst)
 }
 
 extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -296,17 +251,6 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             unsafe {
                 let (x, y) = *CENTRE_POS.get().unwrap();
                 SetCursorPos(x, y);
-
-                loop {
-                    let mut pci = CURSORINFO::default();
-                    GetCursorInfo(&mut pci);
-                    // dbg!(pci);
-                    if pci.flags.0 < 1 {
-                        break;
-                    }
-                    let counter = ShowCursor(false);
-                    // dbg!(counter);
-                }
             };
             return LRESULT(1);
         }

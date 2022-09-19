@@ -6,9 +6,16 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 pub struct InputController {
+    /// Buffer of local input events.
     event_buf: EventBuffer,
+    /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
+    /// Capture input flag.
+    ///
+    /// If this is true, input source should be captured from its host.
     capturing: bool,
+    /// Last time we detect inputs for toggling capture input flag.
+    capturing_toggled_time: Option<Instant>,
 }
 
 impl InputController {
@@ -17,6 +24,7 @@ impl InputController {
             event_buf: Default::default(),
             event_tx,
             capturing: false,
+            capturing_toggled_time: None,
         }
     }
 
@@ -25,19 +33,28 @@ impl InputController {
     pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
         debug!(?event, "received local input event");
 
-        let recent_keys = self.event_buf.recent_pressed_keys();
-        let mut keys = recent_keys.iter();
+        let proto_event = local_event_to_proto_event(&self.event_buf, event);
+
+        self.event_buf.push_input_event(event);
+
+        let recent_keys = self
+            .event_buf
+            .recent_pressed_keys(self.capturing_toggled_time);
+        let mut keys = recent_keys.into_iter();
         let first_key = keys.next();
         let second_key = keys.next();
 
-        if let (Some(KeyCode::RightCtrl), Some(KeyCode::RightCtrl)) = (first_key, second_key) {
-            self.capturing = !self.capturing;
+        if let (Some((KeyCode::RightCtrl, t)), Some((KeyCode::RightCtrl, _))) =
+            (first_key, second_key)
+        {
+            let new_value = !self.capturing;
+            debug!(?new_value, "toggle should capture input");
+            self.capturing = new_value;
+            self.capturing_toggled_time = Some(*t);
         } else {
             if self.capturing {
-                let event = local_event_to_proto_event(&self.event_buf, event);
-                self.event_tx.blocking_send(event)?;
+                self.event_tx.blocking_send(proto_event)?;
             }
-            self.event_buf.push_input_event(event);
         }
 
         Ok(self.capturing)
@@ -50,6 +67,7 @@ struct EventBuffer {
 }
 
 impl EventBuffer {
+    /// Query mouse last absolute position.
     fn prev_mouse_pos(&self) -> Option<MousePosition> {
         self.buf.iter().find_map(|(x, _)| {
             if let LocalInputEvent::MousePosition(pos) = x {
@@ -60,33 +78,48 @@ impl EventBuffer {
         })
     }
 
-    fn recent_pressed_keys(&self) -> Vec<KeyCode> {
-        if self.buf.len() < 2 {
+    /// Query recent pressed keys.
+    ///
+    /// Recent pressed keys are keys where its key up and key down events exist in the buffer.
+    fn recent_pressed_keys(&self, since: Option<Instant>) -> Vec<(&KeyCode, &Instant)> {
+        let buf: Box<dyn Iterator<Item = _>> = match since.as_ref() {
+            Some(since) => Box::new(self.buf.iter().filter(|(_, x)| x > since)),
+            None => Box::new(self.buf.iter()),
+        };
+
+        let buf = buf.collect::<Vec<_>>();
+
+        if buf.len() < 2 {
             return Vec::new();
         }
+
         // pairs of key up & key down
         let mut pressed = Vec::new();
-        for (i, (x, _)) in self.buf[..=self.buf.len() - 2].iter().enumerate() {
+        for (i, (x, t)) in buf[..=buf.len() - 2].iter().enumerate() {
             if let LocalInputEvent::KeyUp { key: up } = x {
-                for (y, _) in &self.buf[i + 1..] {
+                for (y, _) in &buf[i + 1..] {
                     if let LocalInputEvent::KeyDown { key: down } = y {
                         if up == down {
-                            pressed.push(*up);
+                            pressed.push((up, t));
                         }
                     }
                 }
             }
         }
+
         pressed
     }
 
+    /// Add event to buffer and drop expired events.
+    ///
+    /// Expired events are events older than 300 milliseconds.
     fn push_input_event(&mut self, event: LocalInputEvent) {
         let now = Instant::now();
 
         // drop expired events
         let part = self.buf.partition_point(|(_, t)| {
             let d = now - *t;
-            d <= Duration::from_millis(500)
+            d <= Duration::from_millis(300)
         });
         self.buf.truncate(part);
 

@@ -116,7 +116,11 @@ async fn run_session(
                     let server_version = env!("CARGO_PKG_VERSION").to_owned();
                     if server_version == client_version {
                         // request upgrade transport
-                        let server_tls_cert = todo!();
+                        let server_tls_cert =
+                            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/cert.crt"))
+                                .to_vec()
+                                .into();
+
                         let msg: HelloReply = UpgradeTransportRequest { server_tls_cert }.into();
                         transport.send_msg(msg).await?;
 
@@ -138,7 +142,10 @@ async fn run_session(
             }
 
             State::UpgradingTransport { client_tls_cert } => {
-                let server_tls_key = todo!();
+                let server_tls_key =
+                    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/key.key"))
+                        .to_vec()
+                        .into();
 
                 transporter = transporter
                     .upgrade(|stream| upgrade_stream(stream, server_tls_key, client_tls_cert))
