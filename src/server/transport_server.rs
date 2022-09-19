@@ -103,6 +103,15 @@ async fn run_session(
 ) -> Result<(), Error> {
     let mut state = State::Handshaking;
 
+    let cert = {
+        let mut params = rcgen::CertificateParams::default();
+        params
+            .subject_alt_names
+            .push(rcgen::SanType::IpAddress("192.168.123.31".parse().unwrap()));
+        let cert = rcgen::Certificate::from_params(params).unwrap();
+        cert
+    };
+
     loop {
         state = match state {
             State::Handshaking => {
@@ -116,10 +125,7 @@ async fn run_session(
                     let server_version = env!("CARGO_PKG_VERSION").to_owned();
                     if server_version == client_version {
                         // request upgrade transport
-                        let server_tls_cert =
-                            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/cert.crt"))
-                                .to_vec()
-                                .into();
+                        let server_tls_cert = cert.serialize_der().unwrap().into();
 
                         let msg: HelloReply = UpgradeTransportRequest { server_tls_cert }.into();
                         transport.send_msg(msg).await?;
@@ -142,10 +148,7 @@ async fn run_session(
             }
 
             State::UpgradingTransport { client_tls_cert } => {
-                let server_tls_key =
-                    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/key.key"))
-                        .to_vec()
-                        .into();
+                let server_tls_key = cert.serialize_private_key_der().into();
 
                 transporter = transporter
                     .upgrade(|stream| upgrade_stream(stream, server_tls_key, client_tls_cert))
