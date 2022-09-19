@@ -1,4 +1,5 @@
 use crate::{
+    config::no_tls,
     protocol::{
         ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage,
         UpgradeTransportRequest, UpgradeTransportResponse,
@@ -6,8 +7,10 @@ use crate::{
     transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
 };
 use anyhow::{bail, Context, Error};
+use futures::pin_mut;
 use rustls::{ClientConfig, ServerName};
 use std::{
+    env,
     net::{IpAddr, SocketAddr},
     sync::Arc,
 };
@@ -40,25 +43,24 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
     let mut transporter: Transporter<_, _, ServerMessage, ClientMessage> =
         Transporter::Plain(Transport::new(stream));
 
-    let mut state = State::Handshaking {
-        client_version: env!("CARGO_PKG_VERSION").into(),
-    };
+    let mut state = State::Handshaking;
 
     let cert = {
         let mut params = rcgen::CertificateParams::default();
-        params
-            .subject_alt_names
-            .push(rcgen::SanType::IpAddress("".parse().unwrap()));
+        params.subject_alt_names.push(rcgen::SanType::IpAddress(
+            "192.168.123.205".parse().unwrap(),
+        ));
         let cert = rcgen::Certificate::from_params(params).unwrap();
         cert
     };
 
     loop {
         state = match state {
-            State::Handshaking { client_version } => {
+            State::Handshaking => {
                 let transport = transporter.plain()?;
 
                 // send hello message
+                let client_version = env!("CARGO_PKG_VERSION").into();
                 let msg = HelloMessage { client_version };
                 transport.send_msg(msg).await?;
 
@@ -76,6 +78,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                     _ => bail!("received unexpected message, {:?}", msg),
                 };
 
+                // send client tls certificate
                 let client_tls_cert: Certificate = {
                     let x = cert.serialize_der().unwrap();
                     x.into()
@@ -85,26 +88,29 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 };
                 transport.send_msg(msg).await?;
 
-                State::UpgradingTransport { server_tls_cert }
-            }
-
-            State::UpgradingTransport { server_tls_cert } => {
-                let client_tls_key = { cert.serialize_private_key_der().into() };
-
-                transporter = transporter
-                    .upgrade(|stream| async move {
-                        upgrade_stream(stream, client_tls_key, server_tls_cert, server_addr.ip())
+                // upgrade to tls
+                if !no_tls() {
+                    let client_tls_key = { cert.serialize_private_key_der().into() };
+                    transporter = transporter
+                        .upgrade(|stream| async move {
+                            upgrade_stream(
+                                stream,
+                                client_tls_key,
+                                server_tls_cert,
+                                server_addr.ip(),
+                            )
                             .await
-                    })
-                    .await?;
+                        })
+                        .await?;
+                }
 
                 State::Idle
             }
 
             State::Idle => {
-                let transport = transporter.secure()?;
+                let messenger = transporter.any();
 
-                let msg = transport.recv_msg().await?;
+                let msg = messenger.recv_msg().await?;
                 match msg {
                     ServerMessage::Event(event) => State::ReceivedEvent { event },
                     _ => bail!("received unexpected message, {:?}", msg),
@@ -126,8 +132,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
 
 #[derive(Clone, Debug)]
 pub enum State {
-    Handshaking { client_version: String },
-    UpgradingTransport { server_tls_cert: Certificate },
+    Handshaking,
     Idle,
     ReceivedEvent { event: InputEvent },
 }
@@ -143,14 +148,19 @@ where
 {
     let tls: TlsConnector = {
         let cert_verifier = Arc::new(SingleCertVerifier::new(server_tls_cert));
+        let private_key = rustls::PrivateKey(client_tls_key.into());
         let cfg = ClientConfig::builder()
             .with_safe_defaults()
             .with_custom_certificate_verifier(cert_verifier)
-            .with_single_cert(vec![], rustls::PrivateKey(client_tls_key.into()))?;
+            .with_single_cert(vec![], private_key)
+            .context("failed to create client config tls")?;
         Arc::new(cfg).into()
     };
+
     let stream = tls
         .connect(ServerName::IpAddress(server_addr), stream)
-        .await?;
+        .await
+        .context("tls connect failed")?;
+
     Ok(stream.into())
 }

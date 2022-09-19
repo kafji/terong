@@ -1,5 +1,6 @@
 use crate::protocol::{ClientMessage, ServerMessage};
 use anyhow::{bail, Error};
+use async_trait::async_trait;
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
 use macross::newtype;
@@ -9,7 +10,7 @@ use rustls::{
     DistinguishedNames, ServerName,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{convert::TryInto, fmt::Debug, marker::PhantomData, time::SystemTime};
+use std::{convert::TryInto, fmt::Debug, marker::PhantomData, pin::Pin, time::SystemTime};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
@@ -161,6 +162,36 @@ where
     }
 }
 
+#[async_trait]
+pub trait Messenger {
+    type In: Message;
+    type Out: Message;
+
+    async fn recv_msg(&mut self) -> Result<Self::In, Error>;
+    async fn send_msg<'a>(&mut self, msg: Self::Out) -> Result<(), Error>;
+}
+
+#[async_trait]
+impl<T, IN, OUT> Messenger for Transport<T, IN, OUT>
+where
+    T: Send,
+    IN: Message + Send,
+    OUT: Message + Send,
+{
+    type In = IN;
+    type Out = OUT;
+
+    async fn recv_msg(&mut self) -> Result<Self::In, Error> {
+        let x = self.recv_msg().await?;
+        Ok(x)
+    }
+
+    async fn send_msg<'a>(&mut self, msg: Self::Out) -> Result<(), Error> {
+        self.send_msg(msg).await?;
+        Ok(())
+    }
+}
+
 /// Facilitates acquiring and upgrading [Transport].
 #[derive(Debug)]
 pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
@@ -170,10 +201,10 @@ pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
 
 impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT>
 where
-    PS: Debug,
-    SS: Debug,
-    IN: Debug,
-    OUT: Debug,
+    PS: Debug + Send,
+    SS: Debug + Send,
+    IN: Message + Debug + Send,
+    OUT: Message + Debug + Send,
 {
     /// Mutably borrow plain transport.
     pub fn plain(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
@@ -205,6 +236,13 @@ where
             Ok(t)
         } else {
             bail!("expecting secure transport, but was {:?}", self)
+        }
+    }
+
+    pub fn any(&mut self) -> &mut (dyn Messenger<In = IN, Out = OUT> + Send) {
+        match self {
+            Transporter::Plain(x) => x,
+            Transporter::Secure(x) => x,
         }
     }
 }

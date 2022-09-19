@@ -1,4 +1,5 @@
 use crate::{
+    config::no_tls,
     protocol::{
         ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage,
         UpgradeTransportRequest, UpgradeTransportResponse,
@@ -119,40 +120,43 @@ async fn run_session(
 
                 // wait for hello message
                 let msg = transport.recv_msg().await?;
-
-                if let ClientMessage::Hello(HelloMessage { client_version }) = msg {
-                    // check version
-                    let server_version = env!("CARGO_PKG_VERSION").to_owned();
-                    if server_version == client_version {
-                        // request upgrade transport
-                        let server_tls_cert = cert.serialize_der().unwrap().into();
-
-                        let msg: HelloReply = UpgradeTransportRequest { server_tls_cert }.into();
-                        transport.send_msg(msg).await?;
-
-                        let msg = transport.recv_msg().await?;
-                        if let ClientMessage::UpgradeTransportReply(UpgradeTransportResponse {
-                            client_tls_cert,
-                        }) = msg
-                        {
-                            State::UpgradingTransport { client_tls_cert }
-                        } else {
-                            todo!()
-                        }
+                let client_version =
+                    if let ClientMessage::Hello(HelloMessage { client_version }) = msg {
+                        client_version
                     } else {
                         todo!()
-                    }
-                } else {
+                    };
+
+                // check version
+                let server_version = env!("CARGO_PKG_VERSION").to_owned();
+                if client_version != server_version {
                     todo!()
                 }
-            }
 
-            State::UpgradingTransport { client_tls_cert } => {
-                let server_tls_key = cert.serialize_private_key_der().into();
+                // request upgrade transport
+                let server_tls_cert = cert.serialize_der().unwrap().into();
+                let msg: HelloReply = UpgradeTransportRequest { server_tls_cert }.into();
+                transport.send_msg(msg).await?;
 
-                transporter = transporter
-                    .upgrade(|stream| upgrade_stream(stream, server_tls_key, client_tls_cert))
-                    .await?;
+                // wait for upgrade transport reply
+                let msg = transport.recv_msg().await?;
+                let client_tls_cert =
+                    if let ClientMessage::UpgradeTransportReply(UpgradeTransportResponse {
+                        client_tls_cert,
+                    }) = msg
+                    {
+                        client_tls_cert
+                    } else {
+                        todo!()
+                    };
+
+                // upgrade to tls
+                if !no_tls() {
+                    let server_tls_key = cert.serialize_private_key_der().into();
+                    transporter = transporter
+                        .upgrade(|stream| upgrade_stream(stream, server_tls_key, client_tls_cert))
+                        .await?;
+                }
 
                 State::Idle
             }
@@ -168,8 +172,10 @@ async fn run_session(
             }
 
             State::ReceivedEvent { event } => {
-                let transport = transporter.secure()?;
-                transport.send_msg(event).await?;
+                let transport = transporter.any();
+
+                let msg = event.into();
+                transport.send_msg(msg).await?;
 
                 State::Idle
             }
@@ -182,7 +188,6 @@ async fn run_session(
 #[derive(Debug)]
 enum State {
     Handshaking,
-    UpgradingTransport { client_tls_cert: Certificate },
     Idle,
     ReceivedEvent { event: InputEvent },
 }
