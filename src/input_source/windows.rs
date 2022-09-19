@@ -1,12 +1,15 @@
 use super::event::{LocalInputEvent, MousePosition};
 use crate::{
     input_source::controller::InputController,
-    protocol::{InputEvent, KeyCode, MouseButton},
+    protocol::{
+        windows::{ScanCode, VirtualKey},
+        InputEvent, KeyCode, MouseButton,
+    },
 };
 use once_cell::sync::OnceCell;
 use std::{
     ffi::c_void,
-    mem,
+    mem::{self, size_of},
     ptr::null,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -16,18 +19,30 @@ use windows::{
     core::PCWSTR,
     w,
     Win32::{
+        Devices::HumanInterfaceDevice::{
+            HID_USAGE_GENERIC_KEYBOARD, HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC,
+        },
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::HBRUSH,
         System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{
-            CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
-            PostMessageW, RegisterClassExW, SetCursorPos, SetWindowsHookExW, ShowWindow,
-            SystemParametersInfoW, UnhookWindowsHookEx, CW_USEDEFAULT, HCURSOR, HC_ACTION, HHOOK,
-            HICON, KBDLLHOOKSTRUCT, KF_REPEAT, MSG, MSLLHOOKSTRUCT, SHOW_WINDOW_CMD,
-            SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL,
-            WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CREATE, WM_DWMNCRENDERINGCHANGED,
-            WM_GETMINMAXINFO, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-            WM_NCCALCSIZE, WM_NCCREATE, WM_QUIT, WNDCLASSEXW, WNDCLASS_STYLES,
+        UI::{
+            Input::{
+                GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
+                RAWINPUTHEADER, RAWKEYBOARD, RAWMOUSE, RIDEV_EXINPUTSINK, RIDEV_INPUTSINK,
+                RIDEV_NOLEGACY, RID_INPUT, RIM_TYPEKEYBOARD, RIM_TYPEMOUSE,
+            },
+            WindowsAndMessaging::{
+                CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
+                PostMessageW, RegisterClassExW, SetCursorPos, SetWindowsHookExW, ShowWindow,
+                SystemParametersInfoW, UnhookWindowsHookEx, CW_USEDEFAULT, HCURSOR, HC_ACTION,
+                HHOOK, HICON, KBDLLHOOKSTRUCT, KF_REPEAT, MSG, MSLLHOOKSTRUCT, RI_KEY_BREAK,
+                RI_KEY_E0, RI_KEY_E1, RI_KEY_MAKE, SHOW_WINDOW_CMD, SPI_GETWORKAREA,
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE,
+                WINDOW_STYLE, WM_APP, WM_CREATE, WM_DWMNCRENDERINGCHANGED, WM_GETMINMAXINFO,
+                WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
+                WM_NCCALCSIZE, WM_NCCREATE, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSEXW,
+                WNDCLASS_STYLES,
+            },
         },
     },
 };
@@ -55,6 +70,11 @@ pub fn start(event_tx: mpsc::Sender<InputEvent>) -> task::JoinHandle<()> {
 enum MessageCode {
     InputEvent = WM_APP,
 }
+
+// https://stackoverflow.com/a/16565324
+
+// https://learn.microsoft.com/en-us/windows/win32/ipc/interprocess-communications#using-pipes-for-ipc
+// https://learn.microsoft.com/en-us/windows/win32/ipc/anonymous-pipes
 
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     let mut controller = InputController::new(event_tx);
@@ -90,7 +110,9 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             .expect("failed to set keyboard hook"),
     );
 
-    let class = unsafe {
+    let class_name = w!("terong-window-class");
+
+    unsafe {
         let class = WNDCLASSEXW {
             cbSize: mem::size_of::<WNDCLASSEXW>() as _,
             style: WNDCLASS_STYLES::default(),
@@ -102,17 +124,16 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             hCursor: HCURSOR::default(),
             hbrBackground: HBRUSH::default(),
             lpszMenuName: PCWSTR::null(),
-            lpszClassName: PCWSTR::null(),
+            lpszClassName: class_name.into(),
             hIconSm: HICON::default(),
         };
-        let ptr = RegisterClassExW(&class);
-        PCWSTR::from_raw(ptr as *const _)
+        RegisterClassExW(&class);
     };
 
     let window = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE::default(),
-            class,
+            class_name,
             w!("Terong"),
             WINDOW_STYLE::default(),
             CW_USEDEFAULT,
@@ -128,6 +149,24 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 
     unsafe {
         ShowWindow(window, SHOW_WINDOW_CMD::default());
+    }
+
+    unsafe {
+        let devices = [
+            RAWINPUTDEVICE {
+                usUsagePage: HID_USAGE_PAGE_GENERIC,
+                usUsage: HID_USAGE_GENERIC_MOUSE,
+                dwFlags: RIDEV_NOLEGACY | RIDEV_INPUTSINK | RIDEV_EXINPUTSINK,
+                hwndTarget: window,
+            },
+            RAWINPUTDEVICE {
+                usUsagePage: HID_USAGE_PAGE_GENERIC,
+                usUsage: HID_USAGE_GENERIC_KEYBOARD,
+                dwFlags: RIDEV_NOLEGACY | RIDEV_INPUTSINK | RIDEV_EXINPUTSINK,
+                hwndTarget: window,
+            },
+        ];
+        RegisterRawInputDevices(&devices, size_of::<RAWINPUTDEVICE>() as _);
     }
 
     let mut previous_event = None;
@@ -157,6 +196,8 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         // acquire input event, the box will ensure it will be freed
                         let event = *unsafe { Box::from_raw(ptr_event) };
 
+                        dbg!(event);
+
                         let event2 = match (previous_event, &event) {
                             (
                                 Some(LocalInputEvent::KeyDown { key: prev_key }),
@@ -172,7 +213,6 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         set_should_capture_flag(should_capture);
                     }
                     _ => unsafe {
-                        debug!("dispatching message {:?}", msg);
                         DispatchMessageW(&msg);
                     },
                 }
@@ -190,20 +230,81 @@ fn should_capture() -> bool {
     SHOULD_CAPTURE.load(Ordering::SeqCst)
 }
 
-fn set_should_capture_flag(x: bool) {
-    SHOULD_CAPTURE.store(x, Ordering::SeqCst)
+fn set_should_capture_flag(value: bool) {
+    debug!(?value, "setting capture flag");
+    SHOULD_CAPTURE.store(value, Ordering::SeqCst)
 }
 
 extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    match msg {
-        WM_CREATE => (),
-        WM_GETMINMAXINFO => (),
-        WM_NCCREATE => (),
-        WM_NCCALCSIZE => (),
-        WM_DWMNCRENDERINGCHANGED => (),
-        n => warn!("unhandled message {}", n),
+    let event = match msg {
+        WM_INPUT => unsafe {
+            let mut rawinput = RAWINPUT::default();
+            let pdata = {
+                let ptr = &mut rawinput as *mut _;
+                ptr as *mut c_void
+            };
+            let pcbsize = {
+                let mut x = size_of::<RAWINPUT>() as u32;
+                &mut x as *mut _
+            };
+            GetRawInputData(
+                HRAWINPUT(lparam.0),
+                RID_INPUT,
+                pdata,
+                pcbsize,
+                size_of::<RAWINPUTHEADER>() as _,
+            );
+
+            match rawinput.header.dwType {
+                n if n == RIM_TYPEMOUSE.0 => None,
+                n if n == RIM_TYPEKEYBOARD.0 => {
+                    dbg!(rawinput.data.keyboard.Flags as u32 & RI_KEY_E0);
+                    dbg!(rawinput.data.keyboard.Flags as u32 & RI_KEY_E1);
+
+                    dbg!(rawinput.data.keyboard.MakeCode);
+
+                    let key: KeyCode =
+                        KeyCode::from_scancode(ScanCode(dbg!(rawinput.data.keyboard.MakeCode)))
+                            .unwrap();
+
+                    match rawinput.data.keyboard.Flags as u32 {
+                        f if (f & RI_KEY_BREAK) == RI_KEY_MAKE => LocalInputEvent::KeyDown { key },
+                        f if (f & RI_KEY_BREAK) == RI_KEY_BREAK => LocalInputEvent::KeyUp { key },
+                        _ => todo!(),
+                    }
+                    .into()
+                }
+                _ => None,
+            }
+        },
+        action => {
+            debug!(?action, "unhandled message");
+            None
+        }
+    };
+    match event {
+        Some(event) => {
+            dbg!(event);
+
+            let event = {
+                let x = Box::new(event);
+                Box::leak(x)
+            };
+            let ptr_event = event as *mut _;
+            unsafe {
+                let b = PostMessageW(
+                    hwnd,
+                    MessageCode::InputEvent as _,
+                    WPARAM::default(),
+                    LPARAM(ptr_event as isize),
+                );
+                let b: bool = b.into();
+                assert_eq!(b, true);
+            }
+            LRESULT(0)
+        }
+        None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
-    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
 /// Procedure for low level mouse hook.
@@ -255,10 +356,6 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
 
         // if should capture, capture the event instead of passing it through
         if should_capture() {
-            unsafe {
-                let (x, y) = *CENTRE_POS.get().unwrap();
-                SetCursorPos(x, y);
-            };
             return LRESULT(1);
         }
     }
@@ -279,11 +376,14 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     // debug!("received keyboard hook event {:?}", hook_event);
 
     // map hook event to input event
-    let key = KeyCode::from_u16(hook_event.vkCode as _).unwrap();
+    let key = KeyCode::from_virtualkey(VirtualKey(hook_event.vkCode as _)).unwrap();
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN => LocalInputEvent::KeyDown { key }.into(),
-        WM_KEYUP => LocalInputEvent::KeyUp { key }.into(),
-        _ => None,
+        WM_KEYDOWN | WM_SYSKEYDOWN => LocalInputEvent::KeyDown { key }.into(),
+        WM_KEYUP | WM_SYSKEYUP => LocalInputEvent::KeyUp { key }.into(),
+        action => {
+            warn!(?action, "unhandled keyboard event");
+            None
+        }
     };
 
     // send input event in a message to the mq

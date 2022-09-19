@@ -35,9 +35,16 @@ mod tests {
 
     #[test]
     fn test_delta_to() {
-        assert_eq!(
-            MousePosition { x: 1, y: 1 }.delta_to(&MousePosition { x: -1, y: -1 }),
-            (-2, -2)
-        );
+        let original = MousePosition { x: 1, y: 1 };
+        assert_eq!(original.delta_to(&original), (0, 0));
+        assert_eq!(original.delta_to(&MousePosition { x: 1, y: -1 }), (0, -2));
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: -1 }), (-2, -2));
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: 1 }), (-2, 0));
+
+        let original = MousePosition { x: 1, y: -1 };
+        assert_eq!(original.delta_to(&original), (0, 0));
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: -1 }), (-2, 0));
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: 1 }), (-2, 2));
+        assert_eq!(original.delta_to(&MousePosition { x: 1, y: 1 }), (0, 2));
     }
 }
