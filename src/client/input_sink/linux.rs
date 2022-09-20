@@ -1,4 +1,4 @@
-use crate::protocol::{InputEvent, KeyCode, MouseButton};
+use crate::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection};
 use anyhow::{anyhow, Error};
 use evdev_rs::{
     enums::{BusType, EventCode, EventType, EV_REL, EV_SYN},
@@ -51,6 +51,7 @@ fn create_virtual_device() -> Result<UninitDevice, Error> {
     dev.enable_event_type(&EventType::EV_REL)?;
     dev.enable_event_code(&EventCode::EV_REL(EV_REL::REL_X), None)?;
     dev.enable_event_code(&EventCode::EV_REL(EV_REL::REL_Y), None)?;
+    dev.enable_event_code(&EventCode::EV_REL(EV_REL::REL_WHEEL), None)?;
 
     Ok(dev)
 }
@@ -87,7 +88,12 @@ impl TryInto<Vec<LinuxInputEvent>> for InputEvent {
             InputEvent::MouseButtonUp { button } => {
                 vec![(EventCode::EV_KEY(button.into()), 0)]
             }
-            InputEvent::MouseScroll {} => todo!(),
+            InputEvent::MouseScroll {
+                direction: MouseScrollDirection::Up { clicks },
+            } => vec![(EventCode::EV_REL(EV_REL::REL_WHEEL), clicks as i16)],
+            InputEvent::MouseScroll {
+                direction: MouseScrollDirection::Down { clicks },
+            } => vec![(EventCode::EV_REL(EV_REL::REL_WHEEL), -(clicks as i16))],
             InputEvent::KeyDown { key } => vec![(EventCode::EV_KEY(key.into()), 1)],
             InputEvent::KeyRepeat { key } => vec![(EventCode::EV_KEY(key.into()), 2)],
             InputEvent::KeyUp { key } => vec![(EventCode::EV_KEY(key.into()), 0)],
@@ -98,7 +104,7 @@ impl TryInto<Vec<LinuxInputEvent>> for InputEvent {
             .map(|(event_code, value)| LinuxInputEvent {
                 time,
                 event_code,
-                value,
+                value: value as _,
             })
             .chain(iter::once(LinuxInputEvent {
                 time,
