@@ -1,53 +1,30 @@
 use super::event::{LocalInputEvent, MousePosition};
 use crate::{
     input_source::controller::InputController,
-    protocol::{
-        windows::{ScanCode, VirtualKey},
-        InputEvent, KeyCode, MouseButton,
-    },
+    protocol::{windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection},
 };
 use once_cell::sync::OnceCell;
 use std::{
+    cmp,
     ffi::c_void,
-    mem::{self, size_of},
-    ptr::null,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{self, AtomicBool},
 };
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
-use windows::{
-    core::PCWSTR,
-    w,
-    Win32::{
-        Devices::HumanInterfaceDevice::{
-            HID_USAGE_GENERIC_KEYBOARD, HID_USAGE_GENERIC_MOUSE, HID_USAGE_PAGE_GENERIC,
-        },
-        Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM},
-        Graphics::Gdi::HBRUSH,
-        System::LibraryLoader::GetModuleHandleW,
-        UI::{
-            Input::{
-                GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
-                RAWINPUTHEADER, RAWKEYBOARD, RAWMOUSE, RIDEV_EXINPUTSINK, RIDEV_INPUTSINK,
-                RIDEV_NOLEGACY, RID_INPUT, RIM_TYPEKEYBOARD, RIM_TYPEMOUSE,
-            },
-            WindowsAndMessaging::{
-                CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW,
-                PostMessageW, RegisterClassExW, SetCursorPos, SetWindowsHookExW, ShowWindow,
-                SystemParametersInfoW, UnhookWindowsHookEx, CW_USEDEFAULT, HCURSOR, HC_ACTION,
-                HHOOK, HICON, KBDLLHOOKSTRUCT, KF_REPEAT, MSG, MSLLHOOKSTRUCT, RI_KEY_BREAK,
-                RI_KEY_E0, RI_KEY_E1, RI_KEY_MAKE, SHOW_WINDOW_CMD, SPI_GETWORKAREA,
-                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WH_KEYBOARD_LL, WH_MOUSE_LL, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_APP, WM_CREATE, WM_DWMNCRENDERINGCHANGED, WM_GETMINMAXINFO,
-                WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE,
-                WM_NCCALCSIZE, WM_NCCREATE, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSEXW,
-                WNDCLASS_STYLES,
-            },
-        },
+use windows::Win32::{
+    Foundation::{GetLastError, LPARAM, LRESULT, RECT, WPARAM},
+    System::LibraryLoader::GetModuleHandleW,
+    UI::WindowsAndMessaging::{
+        CallNextHookEx, DispatchMessageW, GetMessageW, PostMessageW, SetCursorPos,
+        SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
+        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+        WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP,
+        WM_SYSKEYDOWN, WM_SYSKEYUP,
     },
 };
 
-/// Guard for unhooking hook.
+/// RAII for unhooking hook.
 ///
 /// Calls [UnhookWindowsHookEx] on drop.
 struct Unhooker(HHOOK);
@@ -61,20 +38,21 @@ impl Drop for Unhooker {
     }
 }
 
+/// This function leaks its state globally because of that it might panic if called multiple time.
 pub fn start(event_tx: mpsc::Sender<InputEvent>) -> task::JoinHandle<()> {
     task::spawn_blocking(|| run_input_source(event_tx))
 }
 
+/// Application defined message code.
+///
+/// https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-app
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum MessageCode {
     InputEvent = WM_APP,
 }
 
-// https://stackoverflow.com/a/16565324
-
-// https://learn.microsoft.com/en-us/windows/win32/ipc/interprocess-communications#using-pipes-for-ipc
-// https://learn.microsoft.com/en-us/windows/win32/ipc/anonymous-pipes
+static CURSOR_LOCKED_POS: OnceCell<MousePosition> = OnceCell::new();
 
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     let mut controller = InputController::new(event_tx);
@@ -89,13 +67,15 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
         );
         assert!(b == true);
-        let x = rect.right / 2;
-        let y = rect.bottom / 2;
-        CENTRE_POS.set((x, y)).unwrap();
+        let x = (rect.right / 2) as _;
+        let y = (rect.bottom / 2) as _;
+        CURSOR_LOCKED_POS
+            .set(MousePosition { x, y })
+            .expect("failed to set cursor locked position");
     }
 
     // get module handle for this application
-    let module = unsafe { GetModuleHandleW(None) }.unwrap();
+    let module = unsafe { GetModuleHandleW(None) }.expect("failed to get current module handle");
     assert!(!module.is_invalid());
 
     // set low level mouse hook
@@ -110,70 +90,11 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             .expect("failed to set keyboard hook"),
     );
 
-    let class_name = w!("terong-window-class");
-
-    unsafe {
-        let class = WNDCLASSEXW {
-            cbSize: mem::size_of::<WNDCLASSEXW>() as _,
-            style: WNDCLASS_STYLES::default(),
-            lpfnWndProc: Some(window_proc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: module,
-            hIcon: HICON::default(),
-            hCursor: HCURSOR::default(),
-            hbrBackground: HBRUSH::default(),
-            lpszMenuName: PCWSTR::null(),
-            lpszClassName: class_name.into(),
-            hIconSm: HICON::default(),
-        };
-        RegisterClassExW(&class);
-    };
-
-    let window = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            class_name,
-            w!("Terong"),
-            WINDOW_STYLE::default(),
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            0,
-            0,
-            None,
-            None,
-            module,
-            null(),
-        )
-    };
-
-    unsafe {
-        ShowWindow(window, SHOW_WINDOW_CMD::default());
-    }
-
-    unsafe {
-        let devices = [
-            RAWINPUTDEVICE {
-                usUsagePage: HID_USAGE_PAGE_GENERIC,
-                usUsage: HID_USAGE_GENERIC_MOUSE,
-                dwFlags: RIDEV_NOLEGACY | RIDEV_INPUTSINK | RIDEV_EXINPUTSINK,
-                hwndTarget: window,
-            },
-            RAWINPUTDEVICE {
-                usUsagePage: HID_USAGE_PAGE_GENERIC,
-                usUsage: HID_USAGE_GENERIC_KEYBOARD,
-                dwFlags: RIDEV_NOLEGACY | RIDEV_INPUTSINK | RIDEV_EXINPUTSINK,
-                hwndTarget: window,
-            },
-        ];
-        RegisterRawInputDevices(&devices, size_of::<RAWINPUTDEVICE>() as _);
-    }
-
     let mut previous_event = None;
 
     loop {
         let mut msg = MSG::default();
-        let ok = unsafe { GetMessageW(&mut msg, window, 0, 0) };
+        let ok = unsafe { GetMessageW(&mut msg, None, 0, 0) };
         match ok.0 {
             -1 => unsafe {
                 let err = GetLastError();
@@ -196,8 +117,6 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         // acquire input event, the box will ensure it will be freed
                         let event = *unsafe { Box::from_raw(ptr_event) };
 
-                        dbg!(event);
-
                         let event2 = match (previous_event, &event) {
                             (
                                 Some(LocalInputEvent::KeyDown { key: prev_key }),
@@ -210,7 +129,11 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 
                         // propagate input event to the sink
                         let should_capture = controller.on_input_event(event2).unwrap();
-                        set_should_capture_flag(should_capture);
+                        set_should_consume(should_capture);
+                        if should_capture {
+                            let MousePosition { x, y } = *CURSOR_LOCKED_POS.get().unwrap();
+                            unsafe { SetCursorPos(x as _, y as _) };
+                        }
                     }
                     _ => unsafe {
                         DispatchMessageW(&msg);
@@ -221,90 +144,16 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     }
 }
 
-static CENTRE_POS: OnceCell<(i32, i32)> = OnceCell::new();
+/// If the hooks should consume user inputs.
+static SHOULD_CONSUME: AtomicBool = AtomicBool::new(false);
 
-/// If the hooks should capture user inputs.
-static SHOULD_CAPTURE: AtomicBool = AtomicBool::new(false);
-
-fn should_capture() -> bool {
-    SHOULD_CAPTURE.load(Ordering::SeqCst)
+fn should_consume() -> bool {
+    SHOULD_CONSUME.load(atomic::Ordering::SeqCst)
 }
 
-fn set_should_capture_flag(value: bool) {
-    debug!(?value, "setting capture flag");
-    SHOULD_CAPTURE.store(value, Ordering::SeqCst)
-}
-
-extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    let event = match msg {
-        WM_INPUT => unsafe {
-            let mut rawinput = RAWINPUT::default();
-            let pdata = {
-                let ptr = &mut rawinput as *mut _;
-                ptr as *mut c_void
-            };
-            let pcbsize = {
-                let mut x = size_of::<RAWINPUT>() as u32;
-                &mut x as *mut _
-            };
-            GetRawInputData(
-                HRAWINPUT(lparam.0),
-                RID_INPUT,
-                pdata,
-                pcbsize,
-                size_of::<RAWINPUTHEADER>() as _,
-            );
-
-            match rawinput.header.dwType {
-                n if n == RIM_TYPEMOUSE.0 => None,
-                n if n == RIM_TYPEKEYBOARD.0 => {
-                    dbg!(rawinput.data.keyboard.Flags as u32 & RI_KEY_E0);
-                    dbg!(rawinput.data.keyboard.Flags as u32 & RI_KEY_E1);
-
-                    dbg!(rawinput.data.keyboard.MakeCode);
-
-                    let key: KeyCode =
-                        KeyCode::from_scancode(ScanCode(dbg!(rawinput.data.keyboard.MakeCode)))
-                            .unwrap();
-
-                    match rawinput.data.keyboard.Flags as u32 {
-                        f if (f & RI_KEY_BREAK) == RI_KEY_MAKE => LocalInputEvent::KeyDown { key },
-                        f if (f & RI_KEY_BREAK) == RI_KEY_BREAK => LocalInputEvent::KeyUp { key },
-                        _ => todo!(),
-                    }
-                    .into()
-                }
-                _ => None,
-            }
-        },
-        action => {
-            debug!(?action, "unhandled message");
-            None
-        }
-    };
-    match event {
-        Some(event) => {
-            dbg!(event);
-
-            let event = {
-                let x = Box::new(event);
-                Box::leak(x)
-            };
-            let ptr_event = event as *mut _;
-            unsafe {
-                let b = PostMessageW(
-                    hwnd,
-                    MessageCode::InputEvent as _,
-                    WPARAM::default(),
-                    LPARAM(ptr_event as isize),
-                );
-                let b: bool = b.into();
-                assert_eq!(b, true);
-            }
-            LRESULT(0)
-        }
-        None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
-    }
+fn set_should_consume(value: bool) {
+    debug!(?value, "set should consume flag");
+    SHOULD_CONSUME.store(value, atomic::Ordering::SeqCst)
 }
 
 /// Procedure for low level mouse hook.
@@ -316,46 +165,72 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
     let ptr_hook_event = lparam.0 as *const MSLLHOOKSTRUCT;
     let hook_event = unsafe { *ptr_hook_event };
 
-    // debug!("received mouse hook event {:?}", hook_event);
-
     // map hook event to input event
     let event = match wparam.0 as u32 {
         WM_MOUSEMOVE => {
-            let x = hook_event.pt.x;
-            let y = hook_event.pt.y;
-            LocalInputEvent::MousePosition(MousePosition { x, y }).into()
+            let x = hook_event.pt.x as _;
+            let y = hook_event.pt.y as _;
+            let pos = MousePosition { x, y };
+
+            if should_consume() {
+                let cpos = *CURSOR_LOCKED_POS.get().unwrap();
+                let mvment = cpos.delta_to(&pos);
+                LocalInputEvent::MouseMove(mvment)
+            } else {
+                LocalInputEvent::MousePosition(pos)
+            }
+            .into()
         }
+
         WM_LBUTTONDOWN => LocalInputEvent::MouseButtonDown {
             button: MouseButton::Left,
         }
         .into(),
+
         WM_LBUTTONUP => LocalInputEvent::MouseButtonUp {
             button: MouseButton::Left,
         }
         .into(),
-        _ => None,
+
+        WM_RBUTTONDOWN => LocalInputEvent::MouseButtonDown {
+            button: MouseButton::Right,
+        }
+        .into(),
+
+        WM_RBUTTONUP => LocalInputEvent::MouseButtonUp {
+            button: MouseButton::Right,
+        }
+        .into(),
+
+        WM_MOUSEWHEEL => {
+            let delta = {
+                let mut bytes = [0; 2];
+                bytes.copy_from_slice(&hook_event.mouseData.0.to_be_bytes()[..2]);
+                i16::from_be_bytes(bytes)
+            };
+            let delta = delta / WHEEL_DELTA as i16;
+            let direction = match delta.cmp(&0) {
+                cmp::Ordering::Less => MouseScrollDirection::Down {
+                    clicks: delta.abs() as _,
+                },
+                cmp::Ordering::Equal => unimplemented!(),
+                cmp::Ordering::Greater => MouseScrollDirection::Up {
+                    clicks: delta.abs() as _,
+                },
+            };
+            LocalInputEvent::MouseScroll { direction }
+        }
+        .into(),
+
+        action => {
+            debug!(?action, "unhandled mouse event");
+            None
+        }
     };
 
-    // send input event in a message to the mq
     if let Some(event) = event {
-        let event = {
-            let x = Box::new(event);
-            Box::leak(x)
-        };
-        let ptr_event = event as *mut _;
-        unsafe {
-            let b = PostMessageW(
-                None,
-                MessageCode::InputEvent as _,
-                WPARAM::default(),
-                LPARAM(ptr_event as isize),
-            );
-            let b: bool = b.into();
-            assert_eq!(b, true);
-        }
-
-        // if should capture, capture the event instead of passing it through
-        if should_capture() {
+        let consume = propagate_input_event(event);
+        if consume {
             return LRESULT(1);
         }
     }
@@ -373,43 +248,51 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     let ptr_hook_event = lparam.0 as *const KBDLLHOOKSTRUCT;
     let hook_event = unsafe { *ptr_hook_event };
 
-    // debug!("received keyboard hook event {:?}", hook_event);
-
     // map hook event to input event
-    let key = KeyCode::from_virtualkey(VirtualKey(hook_event.vkCode as _)).unwrap();
+    let key = KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _)).unwrap();
     let event = match wparam.0 as u32 {
         WM_KEYDOWN | WM_SYSKEYDOWN => LocalInputEvent::KeyDown { key }.into(),
+
         WM_KEYUP | WM_SYSKEYUP => LocalInputEvent::KeyUp { key }.into(),
+
         action => {
             warn!(?action, "unhandled keyboard event");
             None
         }
     };
 
-    // send input event in a message to the mq
     if let Some(event) = event {
-        let event = {
-            let x = Box::new(event);
-            Box::leak(x)
-        };
-        let ptr_event = event as *mut _;
-        unsafe {
-            let b = PostMessageW(
-                None,
-                MessageCode::InputEvent as _,
-                WPARAM::default(),
-                LPARAM(ptr_event as isize),
-            );
-            let b: bool = b.into();
-            assert_eq!(b, true);
-        }
-
-        // if should capture, capture the event instead of passing it through
-        if should_capture() {
+        let consume = propagate_input_event(event);
+        if consume {
             return LRESULT(1);
         }
     }
 
     // passthrough
     unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
+}
+
+/// Send input event to the message queue.
+///
+/// Retruns `true` if event should be consumed, `false` if event should be forwarded to the next hook.
+fn propagate_input_event(event: LocalInputEvent) -> bool {
+    let event = {
+        let x = Box::new(event);
+        Box::leak(x)
+    };
+    let ptr_event = event as *mut _;
+
+    unsafe {
+        let b = PostMessageW(
+            None,
+            MessageCode::InputEvent as _,
+            WPARAM::default(),
+            LPARAM(ptr_event as isize),
+        );
+        let b: bool = b.into();
+        assert_eq!(b, true);
+    }
+
+    // if should capture, consume the event instead of passing it through
+    should_consume()
 }

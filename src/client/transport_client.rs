@@ -7,7 +7,6 @@ use crate::{
     transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
 };
 use anyhow::{bail, Context, Error};
-use futures::pin_mut;
 use rustls::{ClientConfig, ServerName};
 use std::{
     env,

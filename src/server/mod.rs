@@ -1,10 +1,12 @@
 mod transport_server;
 
+use crate::logging::init_logger;
 use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
-/// Run the server application.
 pub async fn run() {
+    init_logger();
+
     info!("starting server app");
 
     let (event_tx, event_rx) = mpsc::channel(1);

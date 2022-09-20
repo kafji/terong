@@ -10,7 +10,7 @@ use rustls::{
     DistinguishedNames, ServerName,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{convert::TryInto, fmt::Debug, marker::PhantomData, pin::Pin, time::SystemTime};
+use std::{convert::TryInto, fmt::Debug, marker::PhantomData, time::SystemTime};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
@@ -24,17 +24,22 @@ impl Message for ClientMessage {}
 /// Send protocol message.
 ///
 /// This function is not cancel safe.
-pub async fn send_msg(
+async fn send_msg(
     sink: &mut (impl AsyncWrite + Unpin),
     msg: &(impl Message + Debug),
 ) -> Result<(), Error> {
     debug!("sending message {:?}", msg);
+
     let msg_len: u16 = bincode::serialized_size(&msg)?.try_into()?;
     let len = 2 + msg_len as usize;
+
     let mut buf = vec![0; len];
     buf[0..2].copy_from_slice(&msg_len.to_be_bytes());
+
     bincode::serialize_into(&mut buf[2..], &msg)?;
+
     sink.write_all(&buf).await?;
+
     Ok(())
 }
 
@@ -77,17 +82,25 @@ where
         M: Message + Debug,
     {
         self.fill_buf(2).await?;
+
+        // get message length
         let length = self.buf.get_u16();
+
         self.fill_buf(length as _).await?;
-        let msg = self.buf.copy_to_bytes(length as _);
-        let msg: M = bincode::deserialize(&*msg)?;
+
+        // take message length bytes
+        let bytes = self.buf.copy_to_bytes(length as _);
+
+        let msg: M = bincode::deserialize(&*bytes)?;
         debug!("received message {:?}", msg);
+
         Ok(msg)
     }
 }
 
 #[derive(Debug)]
 pub struct Transport<S, IN, OUT> {
+    /// The IO stream.
     stream: S,
     read_buf: BytesMut,
     /// Incoming message data type.
@@ -238,6 +251,7 @@ where
         }
     }
 
+    /// Mutably borrow current transport.
     pub fn any(&mut self) -> &mut (dyn Messenger<In = IN, Out = OUT> + Send) {
         match self {
             Transporter::Plain(x) => x,
@@ -283,7 +297,7 @@ impl ServerCertVerifier for SingleCertVerifier {
         if &end_entity.0 == self.cert.as_ref() {
             Ok(ServerCertVerified::assertion())
         } else {
-            Err(rustls::Error::General("invalid certificate".into()))
+            Err(rustls::Error::General("invalid server certificate".into()))
         }
     }
 }
@@ -302,7 +316,7 @@ impl ClientCertVerifier for SingleCertVerifier {
         if &end_entity.0 == self.cert.as_ref() {
             Ok(ClientCertVerified::assertion())
         } else {
-            Err(rustls::Error::General("invalid certificate".into()))
+            Err(rustls::Error::General("invalid client certificate".into()))
         }
     }
 }

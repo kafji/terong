@@ -4,4 +4,4 @@
 
 - on linux, capturing input might make a key press stuck (receive key down but key up is captured)
 
-- tls
+- rename project to duangler

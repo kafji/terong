@@ -3,16 +3,22 @@ use strum::{EnumIter, FromRepr};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum InputEvent {
-    MouseMove { dx: i32, dy: i32 },
+    MouseMove { dx: i16, dy: i16 },
 
     MouseButtonDown { button: MouseButton },
     MouseButtonUp { button: MouseButton },
 
-    MouseScroll {},
+    MouseScroll { direction: MouseScrollDirection },
 
     KeyDown { key: KeyCode },
     KeyRepeat { key: KeyCode },
     KeyUp { key: KeyCode },
+}
+
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+pub enum MouseScrollDirection {
+    Up { clicks: u8 },
+    Down { clicks: u8 },
 }
 
 #[repr(u8)]
@@ -142,11 +148,17 @@ pub enum KeyCode {
 
 /// Define a bidirectional injective conversion.
 ///
-/// Given a set A and a set B. This macro takes definition of `A -> B`, in which it will generates a function of `A -> B` and `B -> Option A`.
+/// Given a set A and a set B. This macro takes definition of `A -> B`, in which it will generates functions `A -> B` and `B -> Option A`.
 ///
 /// Its injective property would not be typechecked.
 macro_rules! def_conversion {
-    ($l_ty:ty, $r_ty:ty, { $($l_var:ident => $r_var:ident,)* }) => {
+    (
+        $l_ty:ty,
+        $r_ty:ty,
+        {
+            $($l_var:ident => $r_var:ident,)*
+        }
+    ) => {
         impl Into<$r_ty> for $l_ty {
             fn into(self) -> $r_ty {
                 use $l_ty::*;
@@ -189,7 +201,8 @@ macro_rules! def_conversion {
 
         paste::paste! {
             impl $l_ty {
-                pub fn [<from_$r_ty:lower>](x: $r_ty) -> Option<Self> {
+                #[allow(unused)]
+                pub fn [<from_$r_ty:snake:lower>](x: $r_ty) -> Option<Self> {
                     use $l_ty::*;
                     match x {
                         $(x if x == $r_var => Some($l_var),)*
@@ -331,11 +344,14 @@ pub mod windows {
     use macross::newtype;
 
     newtype! {
+        /// Wrapper type for Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes.
+        ///
+        /// This type aids conversion between [KeyCode] and Windows virtual key codes.
         #[derive(PartialEq, Debug)]
         pub VirtualKey = u16;
     }
 
-    // https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+    // Define value conversion between [KeyCode] and Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes.
     def_conversion!(KeyCode, VirtualKey, {
         Escape = VK_ESCAPE.0.into(),
 
@@ -443,120 +459,5 @@ pub mod windows {
         Left = VK_LEFT.0.into(),
         Down = VK_DOWN.0.into(),
         Right = VK_RIGHT.0.into(),
-    });
-
-    newtype! {
-        #[derive(PartialEq, Debug)]
-        pub ScanCode = u16;
-    }
-
-    // https://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/translate.pdf column `PS/2 Set 1 Make`
-    def_conversion!(KeyCode, ScanCode, {
-        Escape = 0xd1.into(),
-
-        F1 = 0x3b.into(),
-        F2 = 0xd1.into(),
-        F3 = 0xd1.into(),
-        F4 = 0xd1.into(),
-        F5 = 0xd1.into(),
-        F6 = 0xd1.into(),
-        F7 = 0xd1.into(),
-        F8 = 0xd1.into(),
-        F9 = 0xd1.into(),
-        F10 = 0xd1.into(),
-        F11 = 0xd1.into(),
-        F12 = 0xd1.into(),
-
-        PrintScreen = 0xd1.into(),
-        ScrollLock = 0xd1.into(),
-        PauseBreak = 0xd1.into(),
-
-        Grave = 0xd1.into(),
-
-        D1 = 0xd1.into(),
-        D2 = 0xd1.into(),
-        D3 = 0xd1.into(),
-        D4 = 0xd1.into(),
-        D5 = 0xd1.into(),
-        D6 = 0xd1.into(),
-        D7 = 0xd1.into(),
-        D8 = 0xd1.into(),
-        D9 = 0xd1.into(),
-        D0 = 0xd1.into(),
-
-        Minus = 0xd1.into(),
-        Equal = 0xd1.into(),
-
-        A = 0xd1.into(),
-        B = 0xd1.into(),
-        C = 0x2e.into(),
-        D = 0xd1.into(),
-        E = 0xd1.into(),
-        F = 0xd1.into(),
-        G = 0xd1.into(),
-        H = 0xd1.into(),
-        I = 0xd1.into(),
-        J = 0xd1.into(),
-        K = 0xd1.into(),
-        L = 0xd1.into(),
-        M = 0xd1.into(),
-        N = 0xd1.into(),
-        O = 0xd1.into(),
-        P = 0xd1.into(),
-        Q = 0xd1.into(),
-        R = 0xd1.into(),
-        S = 0xd1.into(),
-        T = 0xd1.into(),
-        U = 0xd1.into(),
-        V = 0xd1.into(),
-        W = 0xd1.into(),
-        X = 0xd1.into(),
-        Y = 0xd1.into(),
-        Z = 0xd1.into(),
-
-        LeftBrace = 0xd1.into(),
-        RightBrace = 0xd1.into(),
-
-        SemiColon = 0xd1.into(),
-        Apostrophe = 0xd1.into(),
-
-        Comma = 0xd1.into(),
-        Dot = 0xd1.into(),
-        Slash = 0xd1.into(),
-
-        Backspace = 0xd1.into(),
-        BackSlash = 0xd1.into(),
-        Enter = 0xd1.into(),
-
-        Space = 0xd1.into(),
-
-        Tab = 0xd1.into(),
-        CapsLock = 0xd1.into(),
-
-        LeftShift = 0x2a.into(),
-        RightShift = 0x36.into(),
-
-        LeftCtrl = 0x1d.into(),
-        RightCtrl = 0xd1.into(),
-
-        LeftAlt = 0xd1.into(),
-        RightAlt = 0xd1.into(),
-
-        LeftMeta = 0xd1.into(),
-        RightMeta = 0xd1.into(),
-
-        Insert = 0xd1.into(),
-        Delete = 0xd1.into(),
-
-        Home = 0xd1.into(),
-        End = 0xd1.into(),
-
-        PageUp = 0xd1.into(),
-        PageDown = 0xd1.into(),
-
-        Up = 0xd1.into(),
-        Left = 0xd1.into(),
-        Down = 0xd1.into(),
-        Right = 0xd1.into(),
     });
 }

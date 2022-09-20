@@ -1,9 +1,9 @@
-use super::event::{LocalInputEvent, MousePosition};
+use super::event::{LocalInputEvent, MouseMovement, MousePosition};
 use crate::protocol::{self, InputEvent, KeyCode};
 use anyhow::Error;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, info};
 
 pub struct InputController {
     /// Buffer of local input events.
@@ -31,8 +31,6 @@ impl InputController {
     /// Returns boolean that denote if the next successive inputs should be
     /// captured or not.
     pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
-        debug!(?event, "received local input event");
-
         let proto_event = local_event_to_proto_event(&self.event_buf, event);
 
         self.event_buf.push_input_event(event);
@@ -48,7 +46,7 @@ impl InputController {
             (first_key, second_key)
         {
             let new_value = !self.capturing;
-            debug!(?new_value, "toggle should capture input");
+            info!(?new_value, "should capture input toggled");
             self.capturing = new_value;
             self.capturing_toggled_time = Some(*t);
         } else {
@@ -56,6 +54,8 @@ impl InputController {
                 self.event_tx.blocking_send(proto_event)?;
             }
         }
+
+        debug!(event=?proto_event, "received input event");
 
         Ok(self.capturing)
     }
@@ -128,10 +128,7 @@ impl EventBuffer {
 }
 
 /// Converts mouse absolute position to mouse relative position.
-fn mouse_pos_to_mouse_rel(
-    event_buf: &EventBuffer,
-    pos: &MousePosition,
-) -> (i32 /* dx */, i32 /* dy */) {
+fn mouse_pos_to_mouse_rel(event_buf: &EventBuffer, pos: &MousePosition) -> MouseMovement {
     match event_buf.prev_mouse_pos() {
         Some(prev) => prev.delta_to(pos),
         None => Default::default(),
@@ -145,12 +142,13 @@ fn local_event_to_proto_event(
 ) -> protocol::InputEvent {
     match local {
         LocalInputEvent::MousePosition(pos) => {
-            let (dx, dy) = mouse_pos_to_mouse_rel(event_buf, &pos);
+            let MouseMovement { dx, dy } = mouse_pos_to_mouse_rel(event_buf, &pos);
             InputEvent::MouseMove { dx, dy }
         }
+        LocalInputEvent::MouseMove(MouseMovement { dx, dy }) => InputEvent::MouseMove { dx, dy },
         LocalInputEvent::MouseButtonDown { button } => InputEvent::MouseButtonDown { button },
         LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
-        LocalInputEvent::MouseScroll {} => InputEvent::MouseScroll {},
+        LocalInputEvent::MouseScroll { direction } => InputEvent::MouseScroll { direction },
         LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
         LocalInputEvent::KeyRepeat { key } => InputEvent::KeyRepeat { key },
         LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
