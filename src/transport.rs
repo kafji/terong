@@ -10,7 +10,7 @@ use rustls::{
     DistinguishedNames, ServerName,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{convert::TryInto, fmt::Debug, marker::PhantomData, time::SystemTime};
+use std::{convert::TryInto, fmt::Debug, marker::PhantomData, net::IpAddr, time::SystemTime};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
@@ -319,4 +319,15 @@ impl ClientCertVerifier for SingleCertVerifier {
             Err(rustls::Error::General("invalid client certificate".into()))
         }
     }
+}
+
+pub fn generate_tls_key_pair(host: IpAddr) -> Result<(Certificate, PrivateKey), Error> {
+    let mut params = rcgen::CertificateParams::default();
+    params
+        .subject_alt_names
+        .push(rcgen::SanType::IpAddress(host));
+    let cert = rcgen::Certificate::from_params(params).unwrap();
+    let private_key = cert.serialize_private_key_der().into();
+    let cert = cert.serialize_der()?.into();
+    Ok((cert, private_key))
 }

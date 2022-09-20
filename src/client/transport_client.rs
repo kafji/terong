@@ -4,7 +4,9 @@ use crate::{
         ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage,
         UpgradeTransportRequest, UpgradeTransportResponse,
     },
-    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
+    transport::{
+        generate_tls_key_pair, Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
+    },
 };
 use anyhow::{bail, Context, Error};
 use rustls::{ClientConfig, ServerName};
@@ -32,35 +34,29 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
         .context("invalid server address")?;
 
     // open connection with the server
-    info!("connecting to {}", server_addr);
+    info!(?server_addr, "connecting to server");
     let stream = TcpStream::connect(server_addr)
         .await
         .context("failed to connect to the server")?;
 
-    info!("connected to {}", server_addr);
+    info!(?server_addr, "connected to server");
 
     let mut transporter: Transporter<_, _, ServerMessage, ClientMessage> =
         Transporter::Plain(Transport::new(stream));
 
     let mut state = State::Handshaking;
 
-    let cert = {
-        let mut params = rcgen::CertificateParams::default();
-        params.subject_alt_names.push(rcgen::SanType::IpAddress(
-            "192.168.123.205".parse().unwrap(),
-        ));
-        let cert = rcgen::Certificate::from_params(params).unwrap();
-        cert
-    };
-
     loop {
         debug!(?state);
         state = match state {
             State::Handshaking => {
+                let client_version = env!("CARGO_PKG_VERSION").into();
+                debug!(?server_addr, ?client_version, "handshaking");
+
+                // get transport
                 let transport = transporter.plain()?;
 
                 // send hello message
-                let client_version = env!("CARGO_PKG_VERSION").into();
                 let msg = HelloMessage { client_version };
                 transport.send_msg(msg.into()).await?;
 
@@ -78,11 +74,11 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                     _ => bail!("received unexpected message, {:?}", msg),
                 };
 
+                // generate tls key pair for this session
+                let (client_tls_cert, client_tls_key) =
+                    generate_tls_key_pair("192.168.123.205".parse().unwrap()).unwrap();
+
                 // send client tls certificate
-                let client_tls_cert: Certificate = {
-                    let x = cert.serialize_der().unwrap();
-                    x.into()
-                };
                 let msg = UpgradeTransportResponse {
                     client_tls_cert: client_tls_cert.clone(),
                 };
@@ -93,9 +89,8 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 if no_tls {
                     warn!("tls disabled")
                 } else {
-                    let client_tls_key = { cert.serialize_private_key_der().into() };
                     transporter = transporter
-                        .upgrade(|stream| async move {
+                        .upgrade(move |stream| async move {
                             upgrade_stream(
                                 stream,
                                 client_tls_cert,
@@ -106,6 +101,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                             .await
                         })
                         .await?;
+                    info!(?server_addr, "connection upgraded");
                 }
 
                 State::Idle
@@ -114,10 +110,10 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
             State::Idle => {
                 let messenger = transporter.any();
 
-                debug!(?state, "waiting for message");
+                debug!("waiting for message");
                 let msg = messenger.recv_msg().await?;
 
-                debug!(?state, ?msg, "received message");
+                debug!(?msg, "received message");
 
                 match msg {
                     ServerMessage::Event(event) => State::ReceivedEvent { event },
@@ -126,16 +122,11 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
             }
 
             State::ReceivedEvent { event } => {
-                if let Err(_) = event_tx.send(event).await {
-                    break;
-                }
-
+                event_tx.send(event).await?;
                 State::Idle
             }
         };
     }
-
-    Ok(())
 }
 
 #[derive(Clone, Debug)]
