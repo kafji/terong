@@ -54,6 +54,12 @@ enum MessageCode {
 
 static CURSOR_LOCKED_POS: OnceCell<MousePosition> = OnceCell::new();
 
+fn cursor_locked_pos() -> MousePosition {
+    *CURSOR_LOCKED_POS
+        .get()
+        .expect("cursor locked pos was empty")
+}
+
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     let mut controller = InputController::new(event_tx);
 
@@ -93,12 +99,18 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     let mut previous_event = None;
 
     loop {
+        // set cursor position to its locked position if we're capturing input
+        if capture_input() {
+            let MousePosition { x, y } = cursor_locked_pos();
+            unsafe { SetCursorPos(x as _, y as _) };
+        }
+
         let mut msg = MSG::default();
         let ok = unsafe { GetMessageW(&mut msg, None, 0, 0) };
         match ok.0 {
             -1 => unsafe {
                 let err = GetLastError();
-                error!("{:?}", err);
+                error!("get message error, {:?}", err);
                 break;
             },
             0 => {
@@ -128,12 +140,8 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         previous_event = Some(event);
 
                         // propagate input event to the sink
-                        let should_capture = controller.on_input_event(event2).unwrap();
-                        set_should_consume(should_capture);
-                        if should_capture {
-                            let MousePosition { x, y } = *CURSOR_LOCKED_POS.get().unwrap();
-                            unsafe { SetCursorPos(x as _, y as _) };
-                        }
+                        let capture_input = controller.on_input_event(event2).unwrap();
+                        set_capture_input(capture_input);
                     }
                     _ => unsafe {
                         DispatchMessageW(&msg);
@@ -145,15 +153,15 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 }
 
 /// If the hooks should consume user inputs.
-static SHOULD_CONSUME: AtomicBool = AtomicBool::new(false);
+static CAPTURE_INPUT: AtomicBool = AtomicBool::new(false);
 
-fn should_consume() -> bool {
-    SHOULD_CONSUME.load(atomic::Ordering::SeqCst)
+fn capture_input() -> bool {
+    CAPTURE_INPUT.load(atomic::Ordering::SeqCst)
 }
 
-fn set_should_consume(value: bool) {
-    debug!(?value, "set should consume flag");
-    SHOULD_CONSUME.store(value, atomic::Ordering::SeqCst)
+fn set_capture_input(value: bool) {
+    debug!(?value, "set capture input flag");
+    CAPTURE_INPUT.store(value, atomic::Ordering::SeqCst)
 }
 
 /// Procedure for low level mouse hook.
@@ -172,8 +180,8 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             let y = hook_event.pt.y as _;
             let pos = MousePosition { x, y };
 
-            if should_consume() {
-                let cpos = *CURSOR_LOCKED_POS.get().unwrap();
+            if capture_input() {
+                let cpos = cursor_locked_pos();
                 let mvment = cpos.delta_to(&pos);
                 LocalInputEvent::MouseMove(mvment)
             } else {
@@ -294,5 +302,5 @@ fn propagate_input_event(event: LocalInputEvent) -> bool {
     }
 
     // if should capture, consume the event instead of passing it through
-    should_consume()
+    capture_input()
 }
