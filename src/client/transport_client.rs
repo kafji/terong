@@ -1,7 +1,7 @@
 use crate::{
     config::no_tls,
     protocol::{
-        ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage,
+        ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage, Sha256,
         UpgradeTransportRequest, UpgradeTransportResponse,
     },
     transport::{
@@ -48,6 +48,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
 
     loop {
         debug!(?state);
+
         state = match state {
             State::Handshaking => {
                 let client_version = env!("CARGO_PKG_VERSION").into();
@@ -64,9 +65,9 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 let msg = transport.recv_msg().await?;
                 let server_tls_cert = match msg {
                     ServerMessage::HelloReply(reply) => match reply {
-                        HelloReply::Ok(UpgradeTransportRequest { server_tls_cert }) => {
-                            server_tls_cert
-                        }
+                        HelloReply::Ok(UpgradeTransportRequest {
+                            server_tls_cert_hash: server_tls_cert,
+                        }) => server_tls_cert,
                         HelloReply::Err(err) => {
                             bail!("handshake fail, {:?}", err)
                         }
@@ -80,7 +81,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
 
                 // send client tls certificate
                 let msg = UpgradeTransportResponse {
-                    client_tls_cert: client_tls_cert.clone(),
+                    client_tls_cert_hash: Sha256::from_bytes(client_tls_cert.as_ref()),
                 };
                 transport.send_msg(msg.into()).await?;
 
@@ -91,7 +92,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 } else {
                     transporter = transporter
                         .upgrade(move |stream| async move {
-                            upgrade_stream(
+                            upgrade_client_stream(
                                 stream,
                                 client_tls_cert,
                                 client_tls_key,
@@ -123,6 +124,7 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
 
             State::ReceivedEvent { event } => {
                 event_tx.send(event).await?;
+
                 State::Idle
             }
         };
@@ -136,18 +138,18 @@ pub enum State {
     ReceivedEvent { event: InputEvent },
 }
 
-pub async fn upgrade_stream<S>(
+async fn upgrade_client_stream<S>(
     stream: S,
     client_tls_cert: Certificate,
     client_tls_key: PrivateKey,
-    server_tls_cert: Certificate,
+    server_tls_cert_hash: Sha256,
     server_addr: IpAddr,
 ) -> Result<TlsStream<S>, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let tls: TlsConnector = {
-        let server_cert_verifier = Arc::new(SingleCertVerifier::new(server_tls_cert));
+        let server_cert_verifier = Arc::new(SingleCertVerifier::new(server_tls_cert_hash));
 
         let client_cert = rustls::Certificate(client_tls_cert.into());
         let client_private_key = rustls::PrivateKey(client_tls_key.into());

@@ -16,7 +16,7 @@ pub fn start(event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
     run(event_tx)
 }
 
-/// RAII 'smart pointer' ensuring the device's grab mode will be set to ungrab
+/// RAII ensuring the device's grab mode will be set to ungrab
 /// when it is dropped.
 #[derive(Debug)]
 struct DeviceGuard(Device);

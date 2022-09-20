@@ -1,7 +1,7 @@
 mod input_event;
 
-use crate::transport::Certificate;
 use macross::impl_from;
+use ring::digest;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -73,16 +73,29 @@ pub enum HelloReplyError {
 /// Successful response for [HelloMessage].
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct UpgradeTransportRequest {
-    /// Server TLS certificate.
+    /// Hash of server TLS certificate.
     ///
     /// The client will inspect this value before upgrading connection to TLS.
-    pub server_tls_cert: Certificate,
+    pub server_tls_cert_hash: Sha256,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct UpgradeTransportResponse {
-    /// Client TLS certificate.
+    /// Hash of client TLS certificate.
     ///
     /// The server will inspect this value before upgrading connection to TLS.
-    pub client_tls_cert: Certificate,
+    pub client_tls_cert_hash: Sha256,
+}
+
+/// Container for SHA-256.
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+pub struct Sha256([u8; 32]);
+
+impl Sha256 {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let out = digest::digest(&digest::SHA256, bytes);
+        let mut hash = [0; digest::SHA256_OUTPUT_LEN];
+        hash.copy_from_slice(out.as_ref());
+        Self(hash)
+    }
 }

@@ -1,4 +1,4 @@
-use super::event::{LocalInputEvent, MouseMovement, MousePosition};
+use super::event::{LocalInputEvent, MouseMovement};
 use crate::protocol::{self, InputEvent, KeyCode};
 use anyhow::Error;
 use std::time::{Duration, Instant};
@@ -10,8 +10,6 @@ pub struct InputController {
     event_buf: EventBuffer,
     /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
-    /// Capture input flag.
-    ///
     /// If this is true, input source should be captured from its host.
     capturing: bool,
     /// Last time we detect inputs for toggling capture input flag.
@@ -31,31 +29,36 @@ impl InputController {
     /// Returns boolean that denote if the next successive inputs should be
     /// captured or not.
     pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
-        let proto_event = local_event_to_proto_event(&self.event_buf, event);
-
+        debug!(?event, "received local input event");
         self.event_buf.push_input_event(event);
 
-        let recent_keys = self
-            .event_buf
-            .recent_pressed_keys(self.capturing_toggled_time);
-        let mut keys = recent_keys.into_iter();
-        let first_key = keys.next();
-        let second_key = keys.next();
+        let (last_key, second_last_key) = {
+            let mut keys = self
+                .event_buf
+                .recent_pressed_keys(self.capturing_toggled_time)
+                .into_iter();
+            let last = keys.next();
+            let second_last = keys.next();
+            (last, second_last)
+        };
 
         if let (Some((KeyCode::RightCtrl, t)), Some((KeyCode::RightCtrl, _))) =
-            (first_key, second_key)
+            (last_key, second_last_key)
         {
             let new_value = !self.capturing;
+
             info!(?new_value, "should capture input toggled");
+
             self.capturing = new_value;
             self.capturing_toggled_time = Some(*t);
         } else {
             if self.capturing {
-                self.event_tx.blocking_send(proto_event)?;
+                if let Some(event) = local_event_to_proto_event(event) {
+                    debug!(?event, "relaying input event");
+                    self.event_tx.blocking_send(event)?;
+                }
             }
         }
-
-        debug!(event=?proto_event, "received input event");
 
         Ok(self.capturing)
     }
@@ -67,15 +70,20 @@ struct EventBuffer {
 }
 
 impl EventBuffer {
-    /// Query mouse last absolute position.
-    fn prev_mouse_pos(&self) -> Option<MousePosition> {
-        self.buf.iter().find_map(|(x, _)| {
-            if let LocalInputEvent::MousePosition(pos) = x {
-                Some(*pos)
-            } else {
-                None
-            }
-        })
+    /// Add event to buffer and drop expired events.
+    ///
+    /// Expired events are events older than 300 milliseconds.
+    fn push_input_event(&mut self, event: LocalInputEvent) {
+        let now = Instant::now();
+
+        // drop expired events
+        let part = self.buf.partition_point(|(_, t)| {
+            let d = now - *t;
+            d <= Duration::from_millis(300)
+        });
+        self.buf.truncate(part);
+
+        self.buf.insert(0, (event, now));
     }
 
     /// Query recent pressed keys.
@@ -93,8 +101,8 @@ impl EventBuffer {
             return Vec::new();
         }
 
-        // pairs of key up & key down
         let mut pressed = Vec::new();
+
         for (i, (x, t)) in buf[..=buf.len() - 2].iter().enumerate() {
             if let LocalInputEvent::KeyUp { key: up } = x {
                 for (y, _) in &buf[i + 1..] {
@@ -107,50 +115,26 @@ impl EventBuffer {
             }
         }
 
+        pressed.reverse();
+
         pressed
-    }
-
-    /// Add event to buffer and drop expired events.
-    ///
-    /// Expired events are events older than 300 milliseconds.
-    fn push_input_event(&mut self, event: LocalInputEvent) {
-        let now = Instant::now();
-
-        // drop expired events
-        let part = self.buf.partition_point(|(_, t)| {
-            let d = now - *t;
-            d <= Duration::from_millis(300)
-        });
-        self.buf.truncate(part);
-
-        self.buf.insert(0, (event, now));
-    }
-}
-
-/// Converts mouse absolute position to mouse relative position.
-fn mouse_pos_to_mouse_rel(event_buf: &EventBuffer, pos: &MousePosition) -> MouseMovement {
-    match event_buf.prev_mouse_pos() {
-        Some(prev) => prev.delta_to(pos),
-        None => Default::default(),
     }
 }
 
 /// Converts local input event into protocol input event.
-fn local_event_to_proto_event(
-    event_buf: &EventBuffer,
-    local: LocalInputEvent,
-) -> protocol::InputEvent {
+fn local_event_to_proto_event(local: LocalInputEvent) -> Option<protocol::InputEvent> {
     match local {
-        LocalInputEvent::MousePosition(pos) => {
-            let MouseMovement { dx, dy } = mouse_pos_to_mouse_rel(event_buf, &pos);
-            InputEvent::MouseMove { dx, dy }
+        LocalInputEvent::MouseMove(MouseMovement { dx, dy }) => {
+            InputEvent::MouseMove { dx, dy }.into()
         }
-        LocalInputEvent::MouseMove(MouseMovement { dx, dy }) => InputEvent::MouseMove { dx, dy },
-        LocalInputEvent::MouseButtonDown { button } => InputEvent::MouseButtonDown { button },
-        LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button },
-        LocalInputEvent::MouseScroll { direction } => InputEvent::MouseScroll { direction },
-        LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key },
-        LocalInputEvent::KeyRepeat { key } => InputEvent::KeyRepeat { key },
-        LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key },
+        LocalInputEvent::MouseButtonDown { button } => {
+            InputEvent::MouseButtonDown { button }.into()
+        }
+        LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button }.into(),
+        LocalInputEvent::MouseScroll { direction } => InputEvent::MouseScroll { direction }.into(),
+        LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key }.into(),
+        LocalInputEvent::KeyRepeat { key } => InputEvent::KeyRepeat { key }.into(),
+        LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key }.into(),
+        _ => None,
     }
 }

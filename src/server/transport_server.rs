@@ -1,12 +1,14 @@
 use crate::{
     config::no_tls,
     protocol::{
-        ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage,
-        UpgradeTransportRequest, UpgradeTransportResponse,
+        ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
+        Sha256, UpgradeTransportRequest, UpgradeTransportResponse,
     },
-    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
+    transport::{
+        generate_tls_key_pair, Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
+    },
 };
-use anyhow::{Context, Error};
+use anyhow::{bail, Context, Error};
 use futures::{future, FutureExt};
 use std::{fmt::Debug, net::SocketAddr, sync::Arc};
 use tokio::{
@@ -17,7 +19,7 @@ use tokio::{
     task::{self, JoinError, JoinHandle},
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 pub fn start(proto_event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run(proto_event_rx).await.unwrap() })
@@ -90,6 +92,8 @@ impl SessionHandler {
     }
 }
 
+type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
+
 /// Creates a new session.
 fn create_session(transporter: ServerTransporter) -> SessionHandler {
     let (event_tx, event_rx) = mpsc::channel(1);
@@ -104,16 +108,9 @@ async fn run_session(
 ) -> Result<(), Error> {
     let mut state = State::Handshaking;
 
-    let cert = {
-        let mut params = rcgen::CertificateParams::default();
-        params
-            .subject_alt_names
-            .push(rcgen::SanType::IpAddress("192.168.123.31".parse().unwrap()));
-        let cert = rcgen::Certificate::from_params(params).unwrap();
-        cert
-    };
-
     loop {
+        debug!(?state);
+
         state = match state {
             State::Handshaking => {
                 let transport = transporter.plain()?;
@@ -124,19 +121,26 @@ async fn run_session(
                     if let ClientMessage::Hello(HelloMessage { client_version }) = msg {
                         client_version
                     } else {
-                        todo!()
+                        bail!("expecting hello message, but was {:?}", msg);
                     };
 
                 // check version
                 let server_version = env!("CARGO_PKG_VERSION").to_owned();
                 if client_version != server_version {
-                    todo!()
+                    error!(?server_version, ?client_version, "version mismatch");
+
+                    let msg: HelloReply = HelloReplyError::VersionMismatch.into();
+                    transport.send_msg(msg.into()).await?;
+
+                    break;
                 }
 
+                let (server_tls_cert, server_tls_key) =
+                    generate_tls_key_pair("192.168.123.31".parse().unwrap())?;
+
                 // request upgrade transport
-                let server_tls_cert: Certificate = cert.serialize_der().unwrap().into();
                 let msg: HelloReply = UpgradeTransportRequest {
-                    server_tls_cert: server_tls_cert.clone(),
+                    server_tls_cert_hash: Sha256::from_bytes(server_tls_cert.as_ref()),
                 }
                 .into();
                 transport.send_msg(msg.into()).await?;
@@ -145,7 +149,7 @@ async fn run_session(
                 let msg = transport.recv_msg().await?;
                 let client_tls_cert =
                     if let ClientMessage::UpgradeTransportReply(UpgradeTransportResponse {
-                        client_tls_cert,
+                        client_tls_cert_hash: client_tls_cert,
                     }) = msg
                     {
                         client_tls_cert
@@ -158,10 +162,14 @@ async fn run_session(
                 if no_tls {
                     warn!("tls disabled");
                 } else {
-                    let server_tls_key = cert.serialize_private_key_der().into();
                     transporter = transporter
                         .upgrade(|stream| {
-                            upgrade_stream(stream, server_tls_cert, server_tls_key, client_tls_cert)
+                            upgrade_server_stream(
+                                stream,
+                                server_tls_cert,
+                                server_tls_key,
+                                client_tls_cert,
+                            )
                         })
                         .await?;
                 }
@@ -200,19 +208,17 @@ enum State {
     ReceivedEvent { event: InputEvent },
 }
 
-type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
-
-pub async fn upgrade_stream<S>(
+async fn upgrade_server_stream<S>(
     stream: S,
     server_tls_cert: Certificate,
     server_tls_key: PrivateKey,
-    client_tls_cert: Certificate,
+    client_tls_cert_hash: Sha256,
 ) -> Result<TlsStream<S>, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let tls: TlsAcceptor = {
-        let client_cert_verifier = Arc::new(SingleCertVerifier::new(client_tls_cert));
+        let client_cert_verifier = Arc::new(SingleCertVerifier::new(client_tls_cert_hash));
 
         let server_cert = rustls::Certificate(server_tls_cert.into());
         let server_private_key = rustls::PrivateKey(server_tls_key.into());

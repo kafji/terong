@@ -1,4 +1,4 @@
-use crate::protocol::{ClientMessage, ServerMessage};
+use crate::protocol::{ClientMessage, ServerMessage, Sha256};
 use anyhow::{bail, Error};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, BytesMut};
@@ -275,12 +275,12 @@ newtype! {
 /// Certifier for a single known certificate.
 #[derive(Clone, Debug)]
 pub struct SingleCertVerifier {
-    cert: Certificate,
+    cert_hash: Sha256,
 }
 
 impl SingleCertVerifier {
-    pub fn new(cert: Certificate) -> Self {
-        Self { cert }
+    pub fn new(cert_hash: Sha256) -> Self {
+        Self { cert_hash }
     }
 }
 
@@ -294,7 +294,7 @@ impl ServerCertVerifier for SingleCertVerifier {
         _ocsp_response: &[u8],
         _now: SystemTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        if &end_entity.0 == self.cert.as_ref() {
+        if self.cert_hash == Sha256::from_bytes(&end_entity.0) {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General("invalid server certificate".into()))
@@ -313,7 +313,7 @@ impl ClientCertVerifier for SingleCertVerifier {
         _intermediates: &[rustls::Certificate],
         _now: SystemTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        if &end_entity.0 == self.cert.as_ref() {
+        if self.cert_hash == Sha256::from_bytes(&end_entity.0) {
             Ok(ClientCertVerified::assertion())
         } else {
             Err(rustls::Error::General("invalid client certificate".into()))
@@ -330,4 +330,11 @@ pub fn generate_tls_key_pair(host: IpAddr) -> Result<(Certificate, PrivateKey), 
     let private_key = cert.serialize_private_key_der().into();
     let cert = cert.serialize_der()?.into();
     Ok((cert, private_key))
+}
+
+pub fn tls_cert_verification_user_challenge(
+    server_tls_cert_hash: &Sha256,
+    client_tls_cert_hash: &Sha256,
+) -> bool {
+    todo!()
 }

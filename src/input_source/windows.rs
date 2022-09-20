@@ -3,12 +3,7 @@ use crate::{
     input_source::controller::InputController,
     protocol::{windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection},
 };
-use once_cell::sync::OnceCell;
-use std::{
-    cmp,
-    ffi::c_void,
-    sync::atomic::{self, AtomicBool},
-};
+use std::{cell::Cell, cmp, ffi::c_void};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
 use windows::Win32::{
@@ -19,8 +14,8 @@ use windows::Win32::{
         SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
         KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
         WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-        WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP,
-        WM_SYSKEYDOWN, WM_SYSKEYUP,
+        WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
+        WM_SYSKEYUP,
     },
 };
 
@@ -38,7 +33,6 @@ impl Drop for Unhooker {
     }
 }
 
-/// This function leaks its state globally because of that it might panic if called multiple time.
 pub fn start(event_tx: mpsc::Sender<InputEvent>) -> task::JoinHandle<()> {
     task::spawn_blocking(|| run_input_source(event_tx))
 }
@@ -52,33 +46,8 @@ enum MessageCode {
     InputEvent = WM_APP,
 }
 
-static CURSOR_LOCKED_POS: OnceCell<MousePosition> = OnceCell::new();
-
-fn cursor_locked_pos() -> MousePosition {
-    *CURSOR_LOCKED_POS
-        .get()
-        .expect("cursor locked pos was empty")
-}
-
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     let mut controller = InputController::new(event_tx);
-
-    unsafe {
-        let mut rect = RECT::default();
-        let ptr_rect = &mut rect as *mut _ as *mut c_void;
-        let b = SystemParametersInfoW(
-            SPI_GETWORKAREA,
-            0,
-            ptr_rect,
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
-        );
-        assert!(b == true);
-        let x = (rect.right / 2) as _;
-        let y = (rect.bottom / 2) as _;
-        CURSOR_LOCKED_POS
-            .set(MousePosition { x, y })
-            .expect("failed to set cursor locked position");
-    }
 
     // get module handle for this application
     let module = unsafe { GetModuleHandleW(None) }.expect("failed to get current module handle");
@@ -96,7 +65,8 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             .expect("failed to set keyboard hook"),
     );
 
-    let mut previous_event = None;
+    let mut msg = MSG::default();
+    let mut prev_event = None;
 
     loop {
         // set cursor position to its locked position if we're capturing input
@@ -105,7 +75,7 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             unsafe { SetCursorPos(x as _, y as _) };
         }
 
-        let mut msg = MSG::default();
+        // wait for message
         let ok = unsafe { GetMessageW(&mut msg, None, 0, 0) };
         match ok.0 {
             -1 => unsafe {
@@ -119,28 +89,25 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             }
             _ => {
                 match msg.message {
-                    WM_QUIT => {
-                        debug!("received quit message");
-                        break;
-                    }
                     n if n == MessageCode::InputEvent as _ => {
                         // get pointer to input event from lparam
                         let ptr_event = msg.lParam.0 as *mut LocalInputEvent;
                         // acquire input event, the box will ensure it will be freed
-                        let event = *unsafe { Box::from_raw(ptr_event) };
+                        let new_event = *unsafe { Box::from_raw(ptr_event) };
 
-                        let event2 = match (previous_event, &event) {
+                        // maps repeated key down events into key repeat event
+                        let event = match (prev_event, &new_event) {
                             (
                                 Some(LocalInputEvent::KeyDown { key: prev_key }),
                                 LocalInputEvent::KeyDown { key },
-                            ) if prev_key == *key => LocalInputEvent::KeyRepeat { key: prev_key },
-                            _ => event,
+                            ) if key == &prev_key => LocalInputEvent::KeyRepeat { key: *key },
+                            _ => new_event,
                         };
 
-                        previous_event = Some(event);
+                        prev_event = Some(new_event);
 
                         // propagate input event to the sink
-                        let capture_input = controller.on_input_event(event2).unwrap();
+                        let capture_input = controller.on_input_event(event).unwrap();
                         set_capture_input(capture_input);
                     }
                     _ => unsafe {
@@ -152,16 +119,40 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     }
 }
 
-/// If the hooks should consume user inputs.
-static CAPTURE_INPUT: AtomicBool = AtomicBool::new(false);
+fn get_screen_center() -> (i16 /* x */, i16 /* y */) {
+    let mut rect = RECT::default();
+    let ptr_rect = &mut rect as *mut _ as *mut c_void;
+    let b = unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            ptr_rect,
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
+        )
+    };
+    assert!(b == true);
+    let x = (rect.right / 2) as _;
+    let y = (rect.bottom / 2) as _;
+    (x, y)
+}
+
+thread_local! {
+    static CAPTURE_INPUT: Cell<bool> = Cell::new(false);
+
+    static CURSOR_LOCKED_POS: MousePosition = get_screen_center().into();
+}
 
 fn capture_input() -> bool {
-    CAPTURE_INPUT.load(atomic::Ordering::SeqCst)
+    CAPTURE_INPUT.with(|x| x.get())
 }
 
 fn set_capture_input(value: bool) {
     debug!(?value, "set capture input flag");
-    CAPTURE_INPUT.store(value, atomic::Ordering::SeqCst)
+    CAPTURE_INPUT.with(|x| x.set(value));
+}
+
+fn cursor_locked_pos() -> MousePosition {
+    CURSOR_LOCKED_POS.with(|x| *x)
 }
 
 /// Procedure for low level mouse hook.
@@ -216,19 +207,20 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
                 bytes.copy_from_slice(&hook_event.mouseData.0.to_be_bytes()[..2]);
                 i16::from_be_bytes(bytes)
             };
-            let delta = delta / WHEEL_DELTA as i16;
-            let direction = match delta.cmp(&0) {
+            let clicks = delta / WHEEL_DELTA as i16;
+            let direction = match clicks.cmp(&0) {
                 cmp::Ordering::Less => MouseScrollDirection::Down {
-                    clicks: delta.abs() as _,
-                },
-                cmp::Ordering::Equal => unimplemented!(),
+                    clicks: clicks.abs() as _,
+                }
+                .into(),
+                cmp::Ordering::Equal => None,
                 cmp::Ordering::Greater => MouseScrollDirection::Up {
-                    clicks: delta.abs() as _,
-                },
+                    clicks: clicks.abs() as _,
+                }
+                .into(),
             };
-            LocalInputEvent::MouseScroll { direction }
+            direction.map(|direction| LocalInputEvent::MouseScroll { direction })
         }
-        .into(),
 
         action => {
             debug!(?action, "unhandled mouse event");
@@ -259,7 +251,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     // map hook event to input event
     let key = KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _)).unwrap();
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN | WM_SYSKEYDOWN => LocalInputEvent::KeyDown { key }.into(),
+        WM_KEYDOWN | WM_SYSKEYDOWN => { LocalInputEvent::KeyDown { key } }.into(),
 
         WM_KEYUP | WM_SYSKEYUP => LocalInputEvent::KeyUp { key }.into(),
 
