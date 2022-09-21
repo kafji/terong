@@ -1,4 +1,4 @@
-use crate::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection};
+use crate::transport::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection};
 use anyhow::{anyhow, Error};
 use evdev_rs::{
     enums::{BusType, EventCode, EventType, EV_REL, EV_SYN},

@@ -7,8 +7,7 @@ use crate::{
     client::{config::ClientConfig, transport_client::TransportClient},
     config::Config,
     logging::init_logger,
-    protocol::Sha256,
-    transport::generate_tls_key_pair,
+    transport::{generate_tls_key_pair, protocol::Sha256},
 };
 use tokio::sync::mpsc;
 use tracing::info;

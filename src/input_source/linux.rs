@@ -1,10 +1,11 @@
 use super::{controller::InputController, event::LocalInputEvent};
-use crate::protocol::{InputEvent, KeyCode, MouseButton};
+use crate::transport::protocol::{InputEvent, KeyCode, MouseButton};
 use anyhow::Error;
 use evdev_rs::{enums::EventCode, Device, GrabMode, InputEvent as LinuxInputEvent, ReadFlag};
 use std::{
     fs::File,
     ops::{Deref, DerefMut},
+    time::Instant,
 };
 use tokio::{
     sync::mpsc,
@@ -47,7 +48,10 @@ impl DerefMut for DeviceGuard {
     }
 }
 
-fn read_input_source(device: &mut Device, controller: &mut InputController) -> Result<(), Error> {
+fn read_input_source(
+    device: &mut Device,
+    controller: &mut InputController<Instant>,
+) -> Result<(), Error> {
     loop {
         let (_, event) = device.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
         let event = linux_event_to_local_event(&event);
