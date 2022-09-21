@@ -1,5 +1,5 @@
 use super::event::LocalInputEvent;
-use crate::protocol::{InputEvent, KeyCode};
+use crate::transport::protocol::{InputEvent, KeyCode};
 use anyhow::Error;
 use std::{
     collections::VecDeque,

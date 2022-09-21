@@ -1,6 +1,6 @@
 use crate::{
     config::no_tls,
-    protocol::{
+    transport::protocol::{
         ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
         Sha256, UpgradeTransportRequest, UpgradeTransportResponse,
     },

@@ -1,4 +1,6 @@
-use crate::protocol::{ClientMessage, ServerMessage, Sha256};
+pub mod protocol;
+
+use self::protocol::{ClientMessage, ServerMessage, Sha256};
 use anyhow::{bail, Error};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, BytesMut};
