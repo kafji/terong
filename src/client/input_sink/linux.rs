@@ -17,7 +17,7 @@ pub fn start(event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
     })
 }
 
-// useful documentations:
+// relevant links:
 // https://www.kernel.org/doc/html/v5.15/input/uinput.html
 // https://www.kernel.org/doc/html/v5.15/input/event-codes.html
 // https://github.com/torvalds/linux/blob/master/include/linux/input.h

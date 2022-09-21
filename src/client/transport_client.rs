@@ -1,10 +1,12 @@
 use crate::{
     config::no_tls,
-    transport::protocol::{
-        ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage, Sha256,
-        UpgradeTransportRequest, UpgradeTransportResponse,
+    transport::{
+        protocol::{
+            ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage, Sha256,
+            UpgradeTransportRequest, UpgradeTransportResponse,
+        },
+        Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
-    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
 };
 use anyhow::{bail, Context, Error};
 use rustls::{ClientConfig, ServerName};
@@ -41,7 +43,15 @@ pub fn start(args: TransportClient) -> JoinHandle<()> {
 async fn run_transport_client(args: TransportClient) {
     loop {
         if let Err(err) = connect(&args).await {
-            error!("{}", err);
+            {
+                let cause = err.source();
+                if let Some(cause) = cause {
+                    error!(?cause, "{}", err);
+                } else {
+                    error!("{}", err);
+                }
+            }
+
             sleep(Duration::from_secs(3)).await;
         }
     }
