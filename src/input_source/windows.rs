@@ -3,7 +3,12 @@ use crate::{
     input_source::controller::InputController,
     protocol::{windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection},
 };
-use std::{cell::Cell, cmp, ffi::c_void};
+use std::{
+    cell::Cell,
+    cmp,
+    ffi::c_void,
+    time::{Instant, SystemTime},
+};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
 use windows::Win32::{
@@ -12,10 +17,11 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetMessageW, PostMessageW, SetCursorPos,
         SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-        WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-        WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN,
-        WM_SYSKEYUP,
+        KBDLLHOOKSTRUCT, MOUSEHOOKSTRUCTEX_MOUSE_DATA, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP,
+        WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
     },
 };
 
@@ -186,7 +192,6 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             button: MouseButton::Left,
         }
         .into(),
-
         WM_LBUTTONUP => LocalInputEvent::MouseButtonUp {
             button: MouseButton::Left,
         }
@@ -196,11 +201,24 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             button: MouseButton::Right,
         }
         .into(),
-
         WM_RBUTTONUP => LocalInputEvent::MouseButtonUp {
             button: MouseButton::Right,
         }
         .into(),
+
+        WM_MBUTTONDOWN => LocalInputEvent::MouseButtonDown {
+            button: MouseButton::Middle,
+        }
+        .into(),
+        WM_MBUTTONUP => LocalInputEvent::MouseButtonUp {
+            button: MouseButton::Middle,
+        }
+        .into(),
+
+        WM_XBUTTONDOWN => get_mouse_button(hook_event.mouseData)
+            .map(|button| LocalInputEvent::MouseButtonDown { button }),
+        WM_XBUTTONUP => get_mouse_button(hook_event.mouseData)
+            .map(|button| LocalInputEvent::MouseButtonUp { button }),
 
         WM_MOUSEWHEEL => {
             let delta = {
@@ -292,5 +310,16 @@ fn propagate_input_event(event: LocalInputEvent) {
         );
         let b: bool = b.into();
         assert_eq!(b, true);
+    }
+}
+
+fn get_mouse_button(data: MOUSEHOOKSTRUCTEX_MOUSE_DATA) -> Option<MouseButton> {
+    let mut bytes = [0; 2];
+    bytes.copy_from_slice(&data.0.to_be_bytes()[..2]);
+    let value = u16::from_be_bytes(bytes);
+    match value {
+        n if n == XBUTTON1.0 as _ => MouseButton::Mouse4.into(),
+        n if n == XBUTTON2.0 as _ => MouseButton::Mouse5.into(),
+        _ => None,
     }
 }

@@ -1,7 +1,10 @@
 use super::event::{LocalInputEvent, MouseMovement};
 use crate::protocol::{self, InputEvent, KeyCode};
 use anyhow::Error;
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -28,7 +31,10 @@ impl InputController {
 
     /// Returns boolean that denote if the next successive inputs should be
     /// captured or not.
-    pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
+    pub fn on_input_event(
+        &mut self,
+        (event, time): (LocalInputEvent, Instant),
+    ) -> Result<bool, Error> {
         debug!(?event, "received local input event");
 
         self.event_buf.push_input_event(event);
@@ -36,8 +42,7 @@ impl InputController {
         let (last_key, second_last_key) = {
             let mut keys = self
                 .event_buf
-                .recent_pressed_keys(self.relay_toggled_time)
-                .into_iter();
+                .recent_pressed_keys(self.relay_toggled_time.as_ref());
             let last = keys.next();
             let second_last = keys.next();
             (last, second_last)
@@ -52,9 +57,10 @@ impl InputController {
 
             self.relaying = new_value;
             self.relay_toggled_time = Some(*t);
+            self.event_buf.clear();
         } else {
             if self.relaying {
-                if let Some(event) = local_event_to_proto_event(event) {
+                if let Some(event) = event.into_input_event() {
                     self.event_tx.blocking_send(event)?;
                 }
             }
@@ -89,52 +95,152 @@ impl EventBuffer {
     /// Query recent pressed keys.
     ///
     /// Recent pressed keys are keys where its key up and key down events exist in the buffer.
-    fn recent_pressed_keys(&self, since: Option<Instant>) -> Vec<(&KeyCode, &Instant)> {
-        let buf: Box<dyn Iterator<Item = _>> = match since.as_ref() {
-            Some(since) => Box::new(self.buf.iter().filter(|(_, x)| x > since)),
-            None => Box::new(self.buf.iter()),
-        };
+    fn recent_pressed_keys<'a, 'b>(
+        &'a self,
+        since: Option<&'b Instant>,
+    ) -> impl Iterator<Item = (&KeyCode, &Instant)>
+    where
+        'b: 'a,
+    {
+        RecentKeyPresses::new(
+            self.buf
+                .iter()
+                .filter_map(|(e, t)| KeyPressEvent::from_local_input_event(e, t))
+                .rev(),
+            since,
+        )
+    }
 
-        let buf = buf.collect::<Vec<_>>();
-
-        if buf.len() < 2 {
-            return Vec::new();
-        }
-
-        let mut pressed = Vec::new();
-
-        for (i, (x, t)) in buf[..=buf.len() - 2].iter().enumerate() {
-            if let LocalInputEvent::KeyUp { key: up } = x {
-                for (y, _) in &buf[i + 1..] {
-                    if let LocalInputEvent::KeyDown { key: down } = y {
-                        if up == down {
-                            pressed.push((up, t));
-                        }
-                    }
-                }
-            }
-        }
-
-        pressed.reverse();
-
-        pressed
+    fn clear(&mut self) {
+        self.buf.clear()
     }
 }
 
-/// Converts local input event into protocol input event.
-fn local_event_to_proto_event(local: LocalInputEvent) -> Option<protocol::InputEvent> {
-    match local {
-        LocalInputEvent::MouseMove(MouseMovement { dx, dy }) => {
-            InputEvent::MouseMove { dx, dy }.into()
+#[derive(Debug)]
+enum KeyPressEvent<'a, Order> {
+    Down(KeyPress<'a, Order>),
+    Up(KeyPress<'a, Order>),
+}
+
+#[derive(Debug)]
+struct KeyPress<'a, Order>(&'a KeyCode, &'a Order);
+
+impl<'a, Order> KeyPressEvent<'a, Order> {
+    fn from_local_input_event(event: &'a LocalInputEvent, time: &'a Order) -> Option<Self> {
+        match event {
+            LocalInputEvent::KeyDown { key } => KeyPressEvent::Down(KeyPress(key, time)).into(),
+            LocalInputEvent::KeyUp { key } => KeyPressEvent::Up(KeyPress(key, time)).into(),
+            _ => None,
         }
-        LocalInputEvent::MouseButtonDown { button } => {
-            InputEvent::MouseButtonDown { button }.into()
+    }
+}
+
+struct RecentKeyPresses<'a, Order> {
+    events: Box<dyn Iterator<Item = KeyPressEvent<'a, Order>> + 'a>,
+    queue: VecDeque<KeyPressEvent<'a, Order>>,
+}
+
+impl<'a, Order> RecentKeyPresses<'a, Order>
+where
+    Order: Ord,
+{
+    fn new<'b>(
+        events: impl Iterator<Item = KeyPressEvent<'a, Order>>,
+        since: Option<&'b Order>,
+    ) -> Self
+    where
+        'b: 'a,
+    {
+        let events: Box<dyn Iterator<Item = _>> = match since {
+            Some(since) => {
+                let xs = events.filter(|x| match x {
+                    KeyPressEvent::Down(x) => x.1 > since,
+                    KeyPressEvent::Up(x) => x.1 > since,
+                });
+                Box::new(xs)
+            }
+            _ => Box::new(events),
+        };
+
+        Self {
+            events,
+            queue: Default::default(),
         }
-        LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button }.into(),
-        LocalInputEvent::MouseScroll { direction } => InputEvent::MouseScroll { direction }.into(),
-        LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key }.into(),
-        LocalInputEvent::KeyRepeat { key } => InputEvent::KeyRepeat { key }.into(),
-        LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key }.into(),
-        _ => None,
+    }
+}
+
+impl<'a, Order> Iterator for RecentKeyPresses<'a, Order> {
+    type Item = (&'a KeyCode, &'a Order);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // find key down from queue
+        let key_down = loop {
+            match self.queue.pop_front() {
+                Some(KeyPressEvent::Down(x)) => break x.into(),
+                // queue exhausted, key down not in queue
+                None => break None,
+                // found starting event other than key down
+                _ => continue,
+            }
+        };
+
+        // if key down not in the queue, find it in events
+        let key_down = key_down.or_else(|| loop {
+            match self.events.next() {
+                Some(event) => match event {
+                    KeyPressEvent::Down(x) => break Some(x),
+                    // found starting event other than key down
+                    _ => continue,
+                },
+                // iterator is exhausted
+                None => break None,
+            }
+        });
+
+        // if key down is not found then this iterator is exhausted
+        let key_down = match key_down {
+            Some(x) => x,
+            None => return None,
+        };
+
+        // find key up from queue
+        let key_up = {
+            let mut q = Vec::new();
+            let key = loop {
+                match self.queue.pop_front() {
+                    Some(KeyPressEvent::Up(x)) if x.0 == key_down.0 => break x.into(),
+                    // queue exhausted, key down not in queue
+                    None => break None,
+                    // found other than key up with same key, collect it, and return it back in the same order to the queue
+                    Some(x) => q.push(x),
+                }
+            };
+            // return other key event to the queue
+            for x in q.into_iter().rev() {
+                self.queue.push_front(x);
+            }
+            key
+        };
+
+        let key_up = key_up.or_else(|| loop {
+            match self.events.next() {
+                Some(event) => match event {
+                    KeyPressEvent::Up(x) if x.0 == key_down.0 => break Some(x),
+                    other_key_down => {
+                        self.queue.push_back(other_key_down);
+                        continue;
+                    }
+                },
+                None => break None,
+            }
+        });
+
+        // if key down is not found then this iterator is exhausted
+        let key_up = match key_up {
+            Some(x) => x,
+            None => return None,
+        };
+
+        Some((key_up.0, key_down.1))
     }
 }

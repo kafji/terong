@@ -26,6 +26,8 @@ use tokio::{
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
 use tracing::{debug, error, info, warn};
 
+type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
+
 pub fn start(proto_event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run(proto_event_rx).await.unwrap() })
 }
@@ -107,11 +109,9 @@ impl SessionHandler {
 
     fn is_connected(&self) -> bool {
         let state = self.state.lock().unwrap();
-        matches!(*state, State::Connected)
+        matches!(*state, State::Established)
     }
 }
-
-type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
 
 #[derive(Debug)]
 struct Session {
@@ -125,7 +125,7 @@ struct Session {
 enum State {
     #[default]
     Handshaking,
-    Connected,
+    Established,
 }
 
 /// Creates a new session.
@@ -144,7 +144,11 @@ fn spawn_session(peer_addr: SocketAddr, transporter: ServerTransporter) -> Sessi
     let task = task::spawn(async move {
         // handle session error if any
         if let Err(err) = run_session(session).await {
-            error!("{}", err)
+            if let Some(cause) = err.source() {
+                error!(?cause, "{}", err)
+            } else {
+                error!("{}", err)
+            }
         };
     });
 
@@ -226,17 +230,18 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         let mut stdout = std::io::stdout();
                         write!(
                             stdout,
-                            "Connect with client at {} and TLS certificate hash {}? [y/n]: ",
-                            peer_addr, client_tls_cert_hash
+                            "Connect with client at {} and TLS certificate hash {}?\n(y/[n]): ",
+                            peer_addr.ip(),
+                            client_tls_cert_hash
                         )
                         .unwrap();
                         stdout.flush().unwrap();
-                        let stdin = std::io::stdin();
                         let mut buf = String::new();
-                        stdin
+                        std::io::stdin()
                             .read_line(&mut buf)
                             .expect("failed to read prompt answer");
-                        buf.trim().to_lowercase() == "y"
+                        let answer = buf.trim();
+                        answer == "y" || answer == "Y"
                     })
                 }
                 .await?;
@@ -262,10 +267,12 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         .await?;
                 }
 
-                State::Connected
+                info!("session established");
+
+                State::Established
             }
 
-            State::Connected => {
+            State::Established => {
                 let event = event_rx.recv().await;
                 let event = match event {
                     Some(x) => x,
@@ -280,7 +287,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                     .await
                     .context("failed to send message")?;
 
-                State::Connected
+                State::Established
             }
         };
 
