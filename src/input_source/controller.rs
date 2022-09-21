@@ -3,7 +3,7 @@ use crate::protocol::{self, InputEvent, KeyCode};
 use anyhow::Error;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::debug;
 
 pub struct InputController {
     /// Buffer of local input events.
@@ -48,7 +48,7 @@ impl InputController {
         {
             let new_value = !self.relaying;
 
-            info!(?new_value, "relay toggled");
+            debug!(?new_value, "relay toggled");
 
             self.relaying = new_value;
             self.relay_toggled_time = Some(*t);
