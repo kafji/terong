@@ -36,27 +36,36 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
         .context("invalid server address")?;
 
     loop {
-        // open connection with the server
-        info!(?server_addr, "connecting to server");
-
-        let stream = TcpStream::connect(server_addr)
-            .await
-            .context("failed to connect to the server")?;
-
-        info!(?server_addr, "connected to server");
-
-        let transporter: ClientTransporter = Transporter::Plain(Transport::new(stream));
-
-        let session = Session {
-            server_addr,
-            transporter,
-            event_tx,
-            state: Default::default(),
-        };
-        if let Err(err) = run_session(session).await {
+        if let Err(err) = connect(server_addr, &event_tx).await {
             error!("{}", err);
         }
     }
+}
+
+async fn connect(
+    server_addr: SocketAddr,
+    event_tx: &mpsc::Sender<InputEvent>,
+) -> Result<(), Error> {
+    // open connection with the server
+    info!(?server_addr, "connecting to server");
+
+    let stream = TcpStream::connect(server_addr)
+        .await
+        .context("failed to connect to the server")?;
+
+    info!(?server_addr, "connected to server");
+
+    let transporter: ClientTransporter = Transporter::Plain(Transport::new(stream));
+
+    let session = Session {
+        server_addr,
+        transporter,
+        event_tx,
+        state: Default::default(),
+    };
+    run_session(session).await?;
+
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -71,7 +80,7 @@ struct Session<'a> {
 pub enum SessionState {
     #[default]
     Handshaking,
-    Connected,
+    Established,
 }
 
 async fn run_session(session: Session<'_>) -> Result<(), Error> {
@@ -141,10 +150,11 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                     info!(?server_addr, "connection upgraded");
                 }
 
-                SessionState::Connected
+                info!("session established");
+                SessionState::Established
             }
 
-            SessionState::Connected => {
+            SessionState::Established => {
                 let messenger = transporter.any();
 
                 debug!("waiting for message");
@@ -163,7 +173,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                 // propagate event to input sink
                 event_tx.send(event).await?;
 
-                SessionState::Connected
+                SessionState::Established
             }
         };
     }
