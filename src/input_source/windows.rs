@@ -3,12 +3,7 @@ use crate::{
     input_source::controller::InputController,
     protocol::{windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection},
 };
-use std::{
-    cell::Cell,
-    cmp,
-    ffi::c_void,
-    time::{Instant, SystemTime},
-};
+use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
 use windows::Win32::{
@@ -97,9 +92,9 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                 match msg.message {
                     n if n == MessageCode::InputEvent as _ => {
                         // get pointer to input event from lparam
-                        let ptr_event = msg.lParam.0 as *mut LocalInputEvent;
+                        let ptr_event = msg.lParam.0 as *mut (LocalInputEvent, Duration);
                         // acquire input event, the box will ensure it will be freed
-                        let new_event = *unsafe { Box::from_raw(ptr_event) };
+                        let (new_event, _) = *unsafe { Box::from_raw(ptr_event) };
 
                         // maps repeated key down events into key repeat event
                         let event = match (prev_event, &new_event) {
@@ -248,7 +243,8 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
     };
 
     if let Some(event) = event {
-        propagate_input_event(event);
+        let time = Duration::from_millis(hook_event.time as _);
+        post_input_event(event, time);
     }
 
     if get_grab_input() {
@@ -281,7 +277,8 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     };
 
     if let Some(event) = event {
-        propagate_input_event(event);
+        let time = Duration::from_millis(hook_event.time as _);
+        post_input_event(event, time);
     }
 
     if get_grab_input() {
@@ -294,9 +291,9 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
 /// Send input event to the message queue.
 ///
 /// Retruns `true` if event should be consumed, `false` if event should be forwarded to the next hook.
-fn propagate_input_event(event: LocalInputEvent) {
+fn post_input_event(event: LocalInputEvent, time: Duration) {
     let event = {
-        let x = Box::new(event);
+        let x = Box::new((event, time));
         Box::leak(x)
     };
     let ptr_event = event as *mut _;
