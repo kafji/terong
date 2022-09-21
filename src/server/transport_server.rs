@@ -45,12 +45,8 @@ async fn run(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
             .unwrap_or_else(|| future::pending().boxed());
 
         select! { biased;
-
             // check if session is finished if it's exist
-            x = finished => {
-                if let Err(err) = x {
-                    error!(?err);
-                }
+            Ok(()) = finished => {
                 session_handler.take();
             }
 
@@ -66,20 +62,27 @@ async fn run(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
                 }
             }
 
-            // handle incoming connection, create a new session if it's not exist, otherwise drop the connection
-            conn = listener.accept() => {
-                let (stream, peer_addr) = conn?;
-                info!(?peer_addr, "received incoming connection");
-                if session_handler.is_none() {
-                    let transporter = Transporter::Plain(Transport::new(stream));
-                    let handler = spawn_session(peer_addr, transporter);
-                    session_handler = Some(handler);
-                }
-            }
+            Ok((stream, peer_addr)) = listener.accept() => handle_incoming_connection(&mut session_handler, stream, peer_addr).await,
         }
     }
 
     Ok(())
+}
+
+// Handle incoming connection, create a new session if it's not exist, otherwise drop the connection.
+async fn handle_incoming_connection(
+    session_handler: &mut Option<SessionHandler>,
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+) {
+    info!(?peer_addr, "received incoming connection");
+    if session_handler.is_none() {
+        let transporter = Transporter::Plain(Transport::new(stream));
+        let handler = spawn_session(peer_addr, transporter);
+        *session_handler = Some(handler);
+    } else {
+        info!(?peer_addr, "dropping incoming connection")
+    }
 }
 
 /// Handler to a session.
@@ -99,17 +102,12 @@ impl SessionHandler {
 
     /// This method is cancel safe.
     async fn finished(&mut self) -> Result<(), JoinError> {
-        (&mut self.task).await?;
-        Ok(())
+        (&mut self.task).await
     }
 
     fn is_connected(&self) -> bool {
         let state = self.state.lock().unwrap();
-        match *state {
-            State::Idle => true,
-            State::ReceivedEvent { .. } => true,
-            _ => false,
-        }
+        matches!(*state, State::Connected)
     }
 }
 
@@ -127,10 +125,7 @@ struct Session {
 enum State {
     #[default]
     Handshaking,
-    Idle,
-    ReceivedEvent {
-        event: InputEvent,
-    },
+    Connected,
 }
 
 /// Creates a new session.
@@ -146,7 +141,12 @@ fn spawn_session(peer_addr: SocketAddr, transporter: ServerTransporter) -> Sessi
         state: state.clone(),
     };
 
-    let task = task::spawn(async move { run_session(session).await.unwrap() });
+    let task = task::spawn(async move {
+        // handle session error if any
+        if let Err(err) = run_session(session).await {
+            error!("{}", err)
+        };
+    });
 
     SessionHandler {
         event_tx,
@@ -262,26 +262,25 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         .await?;
                 }
 
-                State::Idle
+                State::Connected
             }
 
-            State::Idle => {
+            State::Connected => {
                 let event = event_rx.recv().await;
                 let event = match event {
                     Some(x) => x,
                     None => break,
                 };
 
-                State::ReceivedEvent { event }
-            }
-
-            State::ReceivedEvent { event } => {
                 let transport = transporter.any();
 
                 let msg = event.into();
-                transport.send_msg(msg).await?;
+                transport
+                    .send_msg(msg)
+                    .await
+                    .context("failed to send message")?;
 
-                State::Idle
+                State::Connected
             }
         };
 

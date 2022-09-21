@@ -81,20 +81,27 @@ where
     where
         M: Message + Debug,
     {
-        self.fill_buf(2).await?;
+        loop {
+            self.fill_buf(2).await?;
 
-        // get message length
-        let length = self.buf.get_u16();
+            // get message length
+            let length = self.buf.get_u16();
 
-        self.fill_buf(length as _).await?;
+            // skip empty message
+            if length == 0 {
+                continue;
+            }
 
-        // take message length bytes
-        let bytes = self.buf.copy_to_bytes(length as _);
+            self.fill_buf(length as _).await?;
 
-        let msg: M = bincode::deserialize(&*bytes)?;
-        debug!(?msg, "received message");
+            // take message length bytes
+            let bytes = self.buf.copy_to_bytes(length as _);
 
-        Ok(msg)
+            let msg: M = bincode::deserialize(&*bytes)?;
+            debug!(?msg, "received message");
+
+            break Ok(msg);
+        }
     }
 }
 

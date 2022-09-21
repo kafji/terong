@@ -11,7 +11,7 @@ pub struct InputController {
     /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
     /// If this is true, input source should be captured from its host.
-    relay: bool,
+    relaying: bool,
     /// Last time we detect inputs for toggling capture input flag.
     relay_toggled_time: Option<Instant>,
 }
@@ -21,7 +21,7 @@ impl InputController {
         Self {
             event_buf: Default::default(),
             event_tx,
-            relay: false,
+            relaying: false,
             relay_toggled_time: None,
         }
     }
@@ -46,21 +46,21 @@ impl InputController {
         if let (Some((KeyCode::RightCtrl, t)), Some((KeyCode::RightCtrl, _))) =
             (last_key, second_last_key)
         {
-            let new_value = !self.relay;
+            let new_value = !self.relaying;
 
             info!(?new_value, "relay toggled");
 
-            self.relay = new_value;
+            self.relaying = new_value;
             self.relay_toggled_time = Some(*t);
         } else {
-            if self.relay {
+            if self.relaying {
                 if let Some(event) = local_event_to_proto_event(event) {
                     self.event_tx.blocking_send(event)?;
                 }
             }
         }
 
-        Ok(self.relay)
+        Ok(self.relaying)
     }
 }
 
