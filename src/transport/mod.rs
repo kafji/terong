@@ -12,7 +12,13 @@ use rustls::{
     DistinguishedNames, ServerName,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{convert::TryInto, fmt::Debug, marker::PhantomData, net::IpAddr, time::SystemTime};
+use std::{
+    convert::TryInto,
+    fmt::{self, Debug},
+    marker::PhantomData,
+    net::IpAddr,
+    time::SystemTime,
+};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
@@ -275,8 +281,16 @@ where
 
 newtype! {
     /// TLS certificate.
-    #[derive(Clone, Serialize, Deserialize, Debug)]
+    #[derive(Clone, Serialize, Deserialize)]
     pub Certificate = Vec<u8>;
+}
+
+impl fmt::Debug for Certificate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Certificate")
+            .field(&hex::encode(&self.0))
+            .finish()
+    }
 }
 
 newtype! {
@@ -334,11 +348,11 @@ impl ClientCertVerifier for SingleCertVerifier {
     }
 }
 
-pub fn generate_tls_key_pair(host: IpAddr) -> Result<(Certificate, PrivateKey), Error> {
+pub fn generate_tls_key_pair(addr: IpAddr) -> Result<(Certificate, PrivateKey), Error> {
     let mut params = rcgen::CertificateParams::default();
     params
         .subject_alt_names
-        .push(rcgen::SanType::IpAddress(host));
+        .push(rcgen::SanType::IpAddress(addr));
     let cert = rcgen::Certificate::from_params(params).unwrap();
     let private_key = cert.serialize_private_key_der().into();
     let cert = cert.serialize_der()?.into();

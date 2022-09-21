@@ -38,11 +38,13 @@ fn create_virtual_device() -> Result<UninitDevice, Error> {
 
     dev.enable_event_type(&EventType::EV_KEY)?;
 
+    // register mouse button events
     for btn in MouseButton::iter() {
         let key = btn.into();
         dev.enable_event_code(&EventCode::EV_KEY(key), None)?;
     }
 
+    // register keyboard events
     for key in KeyCode::iter() {
         let key = key.into();
         dev.enable_event_code(&EventCode::EV_KEY(key), None)?;

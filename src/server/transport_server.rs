@@ -71,7 +71,8 @@ async fn run(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
     Ok(())
 }
 
-// Handle incoming connection, create a new session if it's not exist, otherwise drop the connection.
+// Handle incoming connection, create a new session if it's not exist, otherwise
+// drop the connection.
 async fn handle_incoming_connection(
     session_handler: &mut Option<SessionHandler>,
     stream: TcpStream,

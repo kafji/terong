@@ -4,9 +4,7 @@ use crate::{
         ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage, Sha256,
         UpgradeTransportRequest, UpgradeTransportResponse,
     },
-    transport::{
-        generate_tls_key_pair, Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
-    },
+    transport::{Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter},
 };
 use anyhow::{bail, Context, Error};
 use rustls::{ClientConfig, ServerName};
@@ -14,35 +12,49 @@ use std::{
     env,
     net::{IpAddr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     sync::mpsc,
     task::{self, JoinHandle},
+    time::sleep,
 };
 use tokio_rustls::{TlsConnector, TlsStream};
 use tracing::{debug, error, info, warn};
 
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
-pub fn start(server_addr: SocketAddr, event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
-    task::spawn(async move { run_client(server_addr, event_tx).await })
+#[derive(Debug)]
+pub struct TransportClient {
+    pub server_addr: SocketAddr,
+    pub event_tx: mpsc::Sender<InputEvent>,
+    pub client_tls_cert: Certificate,
+    pub client_tls_key: PrivateKey,
 }
 
-async fn run_client(server_addr: SocketAddr, event_tx: mpsc::Sender<InputEvent>) {
+pub fn start(args: TransportClient) -> JoinHandle<()> {
+    task::spawn(async move { run_transport_client(args).await })
+}
+
+async fn run_transport_client(args: TransportClient) {
     loop {
-        if let Err(err) = connect(server_addr, &event_tx).await {
+        if let Err(err) = connect(&args).await {
             error!("{}", err);
+            sleep(Duration::from_secs(3)).await;
         }
     }
 }
 
-async fn connect(
-    server_addr: SocketAddr,
-    event_tx: &mpsc::Sender<InputEvent>,
-) -> Result<(), Error> {
-    // open connection with the server
+async fn connect(env: &TransportClient) -> Result<(), Error> {
+    let TransportClient {
+        server_addr,
+        event_tx,
+        client_tls_cert,
+        client_tls_key,
+    } = env;
+
     info!(?server_addr, "connecting to server");
 
     let stream = TcpStream::connect(server_addr)
@@ -55,8 +67,10 @@ async fn connect(
 
     let session = Session {
         server_addr,
-        transporter,
         event_tx,
+        client_tls_cert,
+        client_tls_key,
+        transporter,
         state: Default::default(),
     };
     run_session(session).await?;
@@ -66,9 +80,11 @@ async fn connect(
 
 #[derive(Debug)]
 struct Session<'a> {
-    server_addr: SocketAddr,
-    transporter: ClientTransporter,
+    server_addr: &'a SocketAddr,
     event_tx: &'a mpsc::Sender<InputEvent>,
+    client_tls_cert: &'a Certificate,
+    client_tls_key: &'a PrivateKey,
+    transporter: ClientTransporter,
     state: SessionState,
 }
 
@@ -82,8 +98,10 @@ pub enum SessionState {
 async fn run_session(session: Session<'_>) -> Result<(), Error> {
     let Session {
         server_addr,
-        mut transporter,
         event_tx,
+        client_tls_cert,
+        client_tls_key,
+        mut transporter,
         mut state,
     } = session;
 
@@ -114,12 +132,6 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                     _ => bail!("received unexpected message, {:?}", msg),
                 };
 
-                // generate tls key pair for this session
-                debug!("generating tls key pair");
-                let (client_tls_cert, client_tls_key) =
-                    generate_tls_key_pair("192.168.123.205".parse().unwrap())
-                        .context("failed to generate tls key pair")?;
-
                 // send client tls certificate
                 let msg = UpgradeTransportResponse {
                     client_tls_cert_hash: Sha256::from_bytes(client_tls_cert.as_ref()),
@@ -135,8 +147,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                         .upgrade(move |stream| async move {
                             upgrade_client_stream(
                                 stream,
-                                client_tls_cert,
-                                client_tls_key,
+                                client_tls_cert.to_owned(),
+                                client_tls_key.to_owned(),
                                 server_tls_cert,
                                 server_addr.ip(),
                             )
@@ -147,6 +159,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                 }
 
                 info!("session established");
+
                 SessionState::Established
             }
 

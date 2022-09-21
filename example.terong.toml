@@ -1,7 +1,13 @@
 [client]
+# This client IP address.
+# This field is used to generate TLS key at runtime.
+addr = "127.0.0.1"
 # Address of the server the client will connect to.
-server = "127.0.0.1:3000"
+server_addr = "127.0.0.1:3000"
 
 [server]
-# Which port the server should listen for incoming connection.
+# Where the server will listen for incoming connections.
 port = 3000
+# This server IP address.
+# This field is used to generate TLS key at runtime.
+addr = "127.0.0.1"
