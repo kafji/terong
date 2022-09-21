@@ -22,7 +22,9 @@ use tokio::{
     task::{self, JoinHandle},
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
+
+type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
 pub fn start(mut event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
     task::spawn(async move { run_client(&mut event_tx).await.unwrap() })
@@ -33,31 +35,63 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
         .parse()
         .context("invalid server address")?;
 
-    // open connection with the server
-    info!(?server_addr, "connecting to server");
-    let stream = TcpStream::connect(server_addr)
-        .await
-        .context("failed to connect to the server")?;
+    loop {
+        // open connection with the server
+        info!(?server_addr, "connecting to server");
 
-    info!(?server_addr, "connected to server");
+        let stream = TcpStream::connect(server_addr)
+            .await
+            .context("failed to connect to the server")?;
 
-    let mut transporter: Transporter<_, _, ServerMessage, ClientMessage> =
-        Transporter::Plain(Transport::new(stream));
+        info!(?server_addr, "connected to server");
 
-    let mut state = State::Handshaking;
+        let transporter: ClientTransporter = Transporter::Plain(Transport::new(stream));
+
+        let session = Session {
+            server_addr,
+            transporter,
+            event_tx,
+            state: Default::default(),
+        };
+        if let Err(err) = run_session(session).await {
+            error!("{}", err);
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Session<'a> {
+    server_addr: SocketAddr,
+    transporter: ClientTransporter,
+    event_tx: &'a mpsc::Sender<InputEvent>,
+    state: SessionState,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub enum SessionState {
+    #[default]
+    Handshaking,
+    Connected,
+}
+
+async fn run_session(session: Session<'_>) -> Result<(), Error> {
+    let Session {
+        server_addr,
+        mut transporter,
+        event_tx,
+        mut state,
+    } = session;
 
     loop {
         debug!(?state);
 
         state = match state {
-            State::Handshaking => {
-                let client_version = env!("CARGO_PKG_VERSION").into();
-                debug!(?server_addr, ?client_version, "handshaking");
-
+            SessionState::Handshaking => {
                 // get transport
                 let transport = transporter.plain()?;
 
                 // send hello message
+                let client_version = env!("CARGO_PKG_VERSION").into();
                 let msg = HelloMessage { client_version };
                 transport.send_msg(msg.into()).await?;
 
@@ -66,8 +100,8 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 let server_tls_cert = match msg {
                     ServerMessage::HelloReply(reply) => match reply {
                         HelloReply::Ok(UpgradeTransportRequest {
-                            server_tls_cert_hash: server_tls_cert,
-                        }) => server_tls_cert,
+                            server_tls_cert_hash,
+                        }) => server_tls_cert_hash,
                         HelloReply::Err(err) => {
                             bail!("handshake fail, {:?}", err)
                         }
@@ -76,8 +110,10 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                 };
 
                 // generate tls key pair for this session
+                debug!("generating tls key pair");
                 let (client_tls_cert, client_tls_key) =
-                    generate_tls_key_pair("192.168.123.205".parse().unwrap()).unwrap();
+                    generate_tls_key_pair("192.168.123.205".parse().unwrap())
+                        .context("failed to generate tls key pair")?;
 
                 // send client tls certificate
                 let msg = UpgradeTransportResponse {
@@ -105,37 +141,32 @@ async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error
                     info!(?server_addr, "connection upgraded");
                 }
 
-                State::Idle
+                SessionState::Connected
             }
 
-            State::Idle => {
+            SessionState::Connected => {
                 let messenger = transporter.any();
 
                 debug!("waiting for message");
-                let msg = messenger.recv_msg().await?;
+                let msg = messenger
+                    .recv_msg()
+                    .await
+                    .context("failed to receive message")?;
 
                 debug!(?msg, "received message");
 
-                match msg {
-                    ServerMessage::Event(event) => State::ReceivedEvent { event },
+                let event = match msg {
+                    ServerMessage::Event(event) => event,
                     _ => bail!("received unexpected message, {:?}", msg),
-                }
-            }
+                };
 
-            State::ReceivedEvent { event } => {
+                // propagate event to input sink
                 event_tx.send(event).await?;
 
-                State::Idle
+                SessionState::Connected
             }
         };
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum State {
-    Handshaking,
-    Idle,
-    ReceivedEvent { event: InputEvent },
 }
 
 async fn upgrade_client_stream<S>(
