@@ -224,20 +224,20 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         }
 
         action => {
-            debug!(?action, "unhandled mouse event");
+            warn!(?action, "unhandled mouse event");
             None
         }
     };
 
     if let Some(event) = event {
-        let consume = propagate_input_event(event);
-        if consume {
-            return LRESULT(1);
-        }
+        propagate_input_event(event);
     }
 
-    // passthrough
-    unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
+    if get_grab_input() {
+        LRESULT(1)
+    } else {
+        unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
+    }
 }
 
 /// Procedure for low level keyboard hook.
@@ -263,20 +263,20 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     };
 
     if let Some(event) = event {
-        let consume = propagate_input_event(event);
-        if consume {
-            return LRESULT(1);
-        }
+        propagate_input_event(event);
     }
 
-    // passthrough
-    unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
+    if get_grab_input() {
+        LRESULT(1)
+    } else {
+        unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
+    }
 }
 
 /// Send input event to the message queue.
 ///
 /// Retruns `true` if event should be consumed, `false` if event should be forwarded to the next hook.
-fn propagate_input_event(event: LocalInputEvent) -> bool {
+fn propagate_input_event(event: LocalInputEvent) {
     let event = {
         let x = Box::new(event);
         Box::leak(x)
@@ -293,6 +293,4 @@ fn propagate_input_event(event: LocalInputEvent) -> bool {
         let b: bool = b.into();
         assert_eq!(b, true);
     }
-
-    get_grab_input()
 }
