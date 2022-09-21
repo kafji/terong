@@ -1,5 +1,6 @@
 use crate::{
     config::no_tls,
+    log_error,
     transport::{
         protocol::{
             ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage, Sha256,
@@ -43,14 +44,7 @@ pub fn start(args: TransportClient) -> JoinHandle<()> {
 async fn run_transport_client(args: TransportClient) {
     loop {
         if let Err(err) = connect(&args).await {
-            {
-                let cause = err.source();
-                if let Some(cause) = cause {
-                    error!(?cause, "{}", err);
-                } else {
-                    error!("{}", err);
-                }
-            }
+            log_error!(err);
 
             sleep(Duration::from_secs(3)).await;
         }

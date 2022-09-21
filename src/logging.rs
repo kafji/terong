@@ -11,3 +11,15 @@ pub fn init_logger() {
         .with_thread_ids(true)
         .init();
 }
+
+#[macro_export]
+macro_rules! log_error {
+    ($err:expr) => {{
+        let cause = $err.source();
+        if let Some(cause) = cause {
+            tracing::error!(?cause, "{}", $err);
+        } else {
+            tracing::error!("{}", $err);
+        }
+    }};
+}

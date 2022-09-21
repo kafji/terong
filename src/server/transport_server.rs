@@ -1,11 +1,13 @@
 use crate::{
     config::no_tls,
-    transport::protocol::{
-        ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
-        Sha256, UpgradeTransportRequest, UpgradeTransportResponse,
-    },
+    log_error,
     transport::{
-        generate_tls_key_pair, Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
+        generate_tls_key_pair,
+        protocol::{
+            ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
+            Sha256, UpgradeTransportRequest, UpgradeTransportResponse,
+        },
+        Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
 use anyhow::{bail, Context, Error};
@@ -145,11 +147,7 @@ fn spawn_session(peer_addr: SocketAddr, transporter: ServerTransporter) -> Sessi
     let task = task::spawn(async move {
         // handle session error if any
         if let Err(err) = run_session(session).await {
-            if let Some(cause) = err.source() {
-                error!(?cause, "{}", err)
-            } else {
-                error!("{}", err)
-            }
+            log_error!(err);
         };
     });
 
