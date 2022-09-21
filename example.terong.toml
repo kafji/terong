@@ -1,7 +1,7 @@
-[server]
-# Which port the server should listen for incoming connection.
-port = 3000
-
 [client]
 # Address of the server the client will connect to.
 server = "127.0.0.1:3000"
+
+[server]
+# Which port the server should listen for incoming connection.
+port = 3000

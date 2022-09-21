@@ -26,15 +26,11 @@ use tracing::{debug, error, info, warn};
 
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
-pub fn start(mut event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
-    task::spawn(async move { run_client(&mut event_tx).await.unwrap() })
+pub fn start(server_addr: SocketAddr, event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
+    task::spawn(async move { run_client(server_addr, event_tx).await })
 }
 
-async fn run_client(event_tx: &mut mpsc::Sender<InputEvent>) -> Result<(), Error> {
-    let server_addr: SocketAddr = "192.168.123.31:3000"
-        .parse()
-        .context("invalid server address")?;
-
+async fn run_client(server_addr: SocketAddr, event_tx: mpsc::Sender<InputEvent>) {
     loop {
         if let Err(err) = connect(server_addr, &event_tx).await {
             error!("{}", err);
