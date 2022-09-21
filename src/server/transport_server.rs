@@ -229,7 +229,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         let mut stdout = std::io::stdout();
                         write!(
                             stdout,
-                            "Connect with client at {} and TLS certificate hash {}?\n(y/[n]): ",
+                            "Connect with client at {} and TLS certificate hash {}?\ny/(n): ",
                             peer_addr.ip(),
                             client_tls_cert_hash
                         )

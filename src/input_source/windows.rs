@@ -8,11 +8,12 @@ use crate::{
 use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
+use windows::Win32::Foundation::POINT;
 use windows::Win32::{
     Foundation::{GetLastError, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, PostMessageW, SetCursorPos,
+        CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, SetCursorPos,
         SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
         KBDLLHOOKSTRUCT, MOUSEHOOKSTRUCTEX_MOUSE_DATA, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA,
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP,
@@ -70,10 +71,20 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 
     let mut msg = MSG::default();
     let mut prev_event = None;
+    let mut old_cursor_pos = None;
 
     loop {
         // set cursor position to its locked position if we're grabbing input
-        if get_grab_input() {
+        if get_consume_input() {
+            if old_cursor_pos.is_none() {
+                let mut pos = POINT::default();
+                unsafe { GetCursorPos(&mut pos) };
+                old_cursor_pos = Some(MousePosition {
+                    x: pos.x as _,
+                    y: pos.y as _,
+                });
+            }
+
             let MousePosition { x, y } = get_cursor_locked_pos();
             unsafe { SetCursorPos(x as _, y as _) };
         }
@@ -110,9 +121,17 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         prev_event = Some(new_event);
 
                         // propagate input event to the sink
-                        let grab_input = controller.on_input_event(event).unwrap();
-                        if grab_input != get_grab_input() {
-                            set_grab_input(grab_input);
+                        let consume_input = controller.on_input_event(event).unwrap();
+
+                        if consume_input != get_consume_input() {
+                            if !consume_input {
+                                // restore mouse position
+                                if let Some(MousePosition { x, y }) = old_cursor_pos.take() {
+                                    unsafe { SetCursorPos(x as _, y as _) };
+                                }
+                            }
+
+                            set_consume_input(consume_input);
                         }
                     }
                     _ => unsafe {
@@ -142,17 +161,17 @@ fn get_screen_center() -> (i16 /* x */, i16 /* y */) {
 }
 
 thread_local! {
-    static GRAB_INPUT: Cell<bool> = Cell::new(false);
+    static CONSUME_INPUT: Cell<bool> = Cell::new(false);
 
     static CURSOR_LOCKED_POS: MousePosition = get_screen_center().into();
 }
 
-fn get_grab_input() -> bool {
-    GRAB_INPUT.with(|x| x.get())
+fn get_consume_input() -> bool {
+    CONSUME_INPUT.with(|x| x.get())
 }
 
-fn set_grab_input(value: bool) {
-    GRAB_INPUT.with(|x| x.set(value));
+fn set_consume_input(value: bool) {
+    CONSUME_INPUT.with(|x| x.set(value));
 }
 
 fn get_cursor_locked_pos() -> MousePosition {
@@ -175,7 +194,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             let y = hook_event.pt.y as _;
             let pos = MousePosition { x, y };
 
-            if get_grab_input() {
+            if get_consume_input() {
                 let cpos = get_cursor_locked_pos();
                 let mvment = cpos.delta_to(&pos);
                 LocalInputEvent::MouseMove(mvment)
@@ -249,7 +268,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         post_input_event(event, time);
     }
 
-    if get_grab_input() {
+    if get_consume_input() {
         LRESULT(1)
     } else {
         unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
@@ -283,7 +302,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
         post_input_event(event, time);
     }
 
-    if get_grab_input() {
+    if get_consume_input() {
         LRESULT(1)
     } else {
         unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
