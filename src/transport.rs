@@ -26,9 +26,9 @@ impl Message for ClientMessage {}
 /// This function is not cancel safe.
 async fn send_msg(
     sink: &mut (impl AsyncWrite + Unpin),
-    msg: &(impl Message + Debug),
+    msg: impl Message + Debug,
 ) -> Result<(), Error> {
-    debug!("sending message {:?}", msg);
+    debug!(?msg, "sending message");
 
     let msg_len: u16 = bincode::serialized_size(&msg)?.try_into()?;
     let len = 2 + msg_len as usize;
@@ -92,7 +92,7 @@ where
         let bytes = self.buf.copy_to_bytes(length as _);
 
         let msg: M = bincode::deserialize(&*bytes)?;
-        debug!("received message {:?}", msg);
+        debug!(?msg, "received message");
 
         Ok(msg)
     }
@@ -152,7 +152,7 @@ where
     ///
     /// This method is not cancel safe.
     pub async fn send_msg<'a>(&mut self, msg: OUT) -> Result<(), Error> {
-        send_msg(&mut self.stream, &msg).await
+        send_msg(&mut self.stream, msg).await
     }
 }
 
@@ -211,23 +211,19 @@ pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
     Secure(Transport<SS, IN, OUT>),
 }
 
-impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT>
-where
-    PS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
-    SS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
-    IN: Message + Debug + Send,
-    OUT: Message + Debug + Send + Sync,
-{
+impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT> {
     /// Mutably borrow plain transport.
     pub fn plain(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
         if let Self::Plain(t) = self {
             Ok(t)
         } else {
-            bail!("expecting plain text transport, but was {:?}", self)
+            bail!("expecting plain text transport, but was not")
         }
     }
 
     /// Upgrades plain text transport to secure transport.
+    ///
+    /// Trying to upgrade secure transport will produce a runtime error.
     pub async fn upgrade<F, Fut>(self, upgrader: F) -> Result<Self, Error>
     where
         F: FnOnce(PS) -> Fut,
@@ -238,7 +234,7 @@ where
                 let t = t.try_map_stream(upgrader).await?;
                 Ok(Self::Secure(t))
             }
-            _ => bail!("expecting plain text transport, but was {:?}", self),
+            _ => bail!("expecting plain text transport, but was not"),
         }
     }
 
@@ -247,10 +243,18 @@ where
         if let Self::Secure(t) = self {
             Ok(t)
         } else {
-            bail!("expecting secure transport, but was {:?}", self)
+            bail!("expecting secure transport, but was not")
         }
     }
+}
 
+impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT>
+where
+    PS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
+    SS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
+    IN: Message + Debug + Send,
+    OUT: Message + Debug + Send + Sync,
+{
     /// Mutably borrow current transport.
     pub fn any(&mut self) -> &mut (dyn Messenger<In = IN, Out = OUT> + Send) {
         match self {
@@ -330,11 +334,4 @@ pub fn generate_tls_key_pair(host: IpAddr) -> Result<(Certificate, PrivateKey), 
     let private_key = cert.serialize_private_key_der().into();
     let cert = cert.serialize_der()?.into();
     Ok((cert, private_key))
-}
-
-pub fn tls_cert_verification_user_challenge(
-    server_tls_cert_hash: &Sha256,
-    client_tls_cert_hash: &Sha256,
-) -> bool {
-    todo!()
 }

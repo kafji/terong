@@ -11,9 +11,9 @@ pub struct InputController {
     /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
     /// If this is true, input source should be captured from its host.
-    capturing: bool,
+    relay: bool,
     /// Last time we detect inputs for toggling capture input flag.
-    capturing_toggled_time: Option<Instant>,
+    relay_toggled_time: Option<Instant>,
 }
 
 impl InputController {
@@ -21,8 +21,8 @@ impl InputController {
         Self {
             event_buf: Default::default(),
             event_tx,
-            capturing: false,
-            capturing_toggled_time: None,
+            relay: false,
+            relay_toggled_time: None,
         }
     }
 
@@ -30,12 +30,13 @@ impl InputController {
     /// captured or not.
     pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
         debug!(?event, "received local input event");
+
         self.event_buf.push_input_event(event);
 
         let (last_key, second_last_key) = {
             let mut keys = self
                 .event_buf
-                .recent_pressed_keys(self.capturing_toggled_time)
+                .recent_pressed_keys(self.relay_toggled_time)
                 .into_iter();
             let last = keys.next();
             let second_last = keys.next();
@@ -45,22 +46,21 @@ impl InputController {
         if let (Some((KeyCode::RightCtrl, t)), Some((KeyCode::RightCtrl, _))) =
             (last_key, second_last_key)
         {
-            let new_value = !self.capturing;
+            let new_value = !self.relay;
 
-            info!(?new_value, "should capture input toggled");
+            info!(?new_value, "relay toggled");
 
-            self.capturing = new_value;
-            self.capturing_toggled_time = Some(*t);
+            self.relay = new_value;
+            self.relay_toggled_time = Some(*t);
         } else {
-            if self.capturing {
+            if self.relay {
                 if let Some(event) = local_event_to_proto_event(event) {
-                    debug!(?event, "relaying input event");
                     self.event_tx.blocking_send(event)?;
                 }
             }
         }
 
-        Ok(self.capturing)
+        Ok(self.relay)
     }
 }
 

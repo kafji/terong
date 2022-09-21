@@ -69,9 +69,9 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     let mut prev_event = None;
 
     loop {
-        // set cursor position to its locked position if we're capturing input
-        if capture_input() {
-            let MousePosition { x, y } = cursor_locked_pos();
+        // set cursor position to its locked position if we're grabbing input
+        if get_grab_input() {
+            let MousePosition { x, y } = get_cursor_locked_pos();
             unsafe { SetCursorPos(x as _, y as _) };
         }
 
@@ -80,7 +80,7 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
         match ok.0 {
             -1 => unsafe {
                 let err = GetLastError();
-                error!("get message error, {:?}", err);
+                error!(?err);
                 break;
             },
             0 => {
@@ -107,8 +107,10 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         prev_event = Some(new_event);
 
                         // propagate input event to the sink
-                        let capture_input = controller.on_input_event(event).unwrap();
-                        set_capture_input(capture_input);
+                        let grab_input = controller.on_input_event(event).unwrap();
+                        if grab_input != get_grab_input() {
+                            set_grab_input(grab_input);
+                        }
                     }
                     _ => unsafe {
                         DispatchMessageW(&msg);
@@ -137,21 +139,20 @@ fn get_screen_center() -> (i16 /* x */, i16 /* y */) {
 }
 
 thread_local! {
-    static CAPTURE_INPUT: Cell<bool> = Cell::new(false);
+    static GRAB_INPUT: Cell<bool> = Cell::new(false);
 
     static CURSOR_LOCKED_POS: MousePosition = get_screen_center().into();
 }
 
-fn capture_input() -> bool {
-    CAPTURE_INPUT.with(|x| x.get())
+fn get_grab_input() -> bool {
+    GRAB_INPUT.with(|x| x.get())
 }
 
-fn set_capture_input(value: bool) {
-    debug!(?value, "set capture input flag");
-    CAPTURE_INPUT.with(|x| x.set(value));
+fn set_grab_input(value: bool) {
+    GRAB_INPUT.with(|x| x.set(value));
 }
 
-fn cursor_locked_pos() -> MousePosition {
+fn get_cursor_locked_pos() -> MousePosition {
     CURSOR_LOCKED_POS.with(|x| *x)
 }
 
@@ -171,8 +172,8 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             let y = hook_event.pt.y as _;
             let pos = MousePosition { x, y };
 
-            if capture_input() {
-                let cpos = cursor_locked_pos();
+            if get_grab_input() {
+                let cpos = get_cursor_locked_pos();
                 let mvment = cpos.delta_to(&pos);
                 LocalInputEvent::MouseMove(mvment)
             } else {
@@ -293,6 +294,5 @@ fn propagate_input_event(event: LocalInputEvent) -> bool {
         assert_eq!(b, true);
     }
 
-    // if should capture, consume the event instead of passing it through
-    capture_input()
+    get_grab_input()
 }

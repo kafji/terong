@@ -9,7 +9,7 @@ use tracing::info;
 pub async fn run() {
     init_logger();
 
-    info!("starting client");
+    info!("starting client app");
 
     let (event_tx, event_rx) = mpsc::channel(1);
 
@@ -19,5 +19,5 @@ pub async fn run() {
 
     tokio::try_join!(client, consumer).unwrap();
 
-    info!("client stopped");
+    info!("client app stopped");
 }

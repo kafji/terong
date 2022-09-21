@@ -3,7 +3,7 @@ mod input_event;
 use macross::impl_from;
 use ring::digest;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::fmt::{self, Debug};
 
 pub use self::input_event::*;
 
@@ -97,5 +97,11 @@ impl Sha256 {
         let mut hash = [0; digest::SHA256_OUTPUT_LEN];
         hash.copy_from_slice(out.as_ref());
         Self(hash)
+    }
+}
+
+impl fmt::Display for Sha256 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
     }
 }
