@@ -9,18 +9,19 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::debug;
 
-pub struct InputController<OrderKey> {
+pub struct InputController {
     /// Buffer of local input events.
-    event_buf: EventBuffer<OrderKey>,
+    event_buf: EventBuffer<Instant>,
     /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
-    /// If this is true input source should be consumed from its host and propagated to the input sink.
+    /// If this is true input source should be consumed from its host and
+    /// propagated to the input sink.
     relay: bool,
     /// Last time we detect inputs for toggling the relay flag.
-    relay_toggled_at: Option<OrderKey>,
+    relay_toggled_at: Option<Instant>,
 }
 
-impl<T> InputController<T> {
+impl InputController {
     pub fn new(event_tx: mpsc::Sender<InputEvent>) -> Self {
         Self {
             event_buf: Default::default(),
@@ -29,9 +30,7 @@ impl<T> InputController<T> {
             relay_toggled_at: None,
         }
     }
-}
 
-impl InputController<Instant> {
     /// Returns boolean that denote if the next successive inputs should be
     /// captured or not.
     pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
@@ -90,7 +89,8 @@ where
 {
     /// Add event to buffer and drop outdated events.
     ///
-    /// Outdated events are events older than 300 milliseconds from the newest event.
+    /// Outdated events are events older than 300 milliseconds from the newest
+    /// event.
     fn push_input_event(&mut self, event: LocalInputEvent, time: OrderKey) {
         // drop outdated events
         let part = self.buf.partition_point(|(_, t)| {
@@ -115,7 +115,8 @@ where
 {
     /// Query recent pressed keys.
     ///
-    /// Recent pressed keys are keys where its key up and key down events exist in the buffer.
+    /// Recent pressed keys are keys where its key up and key down events exist
+    /// in the buffer.
     fn recent_pressed_keys<'a, 'b>(
         &'a self,
         since: Option<&'b OrderKey>,
@@ -229,7 +230,8 @@ impl<'a, T> RecentKeyPresses<'a, T> {
                     Some(KeyPressEvent::Up(x)) if x.key == key => break x.into(),
                     // queue exhausted, key down not in queue
                     None => break None,
-                    // found other than key up with same key, collect it, and return it back in the same order to the queue
+                    // found other than key up with same key, collect it, and return it back in the
+                    // same order to the queue
                     Some(x) => q.push(x),
                 }
             };

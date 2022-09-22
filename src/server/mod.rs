@@ -8,6 +8,7 @@ use crate::{
     server::{config::ServerConfig, transport_server::TransportServer},
     transport::{generate_tls_key_pair, protocol::Sha256},
 };
+use cfg_if::cfg_if;
 use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
@@ -15,7 +16,7 @@ use tracing::info;
 pub async fn run() {
     init_tracing();
 
-    let ServerConfig { port, addr } = Config::read_config()
+    let config @ ServerConfig { port, addr, .. } = Config::read_config()
         .await
         .expect("failed to read config")
         .server();
@@ -31,7 +32,20 @@ pub async fn run() {
 
     let (event_tx, event_rx) = mpsc::channel(1);
 
-    let input_source = crate::input_source::start(event_tx);
+    let input_source = {
+        cfg_if! {
+            if #[cfg(target_os = "linux")] {
+                crate::input_source::start(
+                    config.linux.keyboard_device,
+                    config.linux.mouse_device,
+                    config.linux.touchpad_device,
+                    event_tx
+                )
+            } else {
+                crate::input_source::start(event_tx)
+            }
+        }
+    };
 
     let server = {
         let env = TransportServer {

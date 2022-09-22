@@ -5,7 +5,7 @@ A [KVM switch software](https://en.wikipedia.org/wiki/KVM_switch).
 ## Features
 
 - Share mouse and keyboard input between 2 machines.
-- Support Linux and Windows.
+- Support Windows and Linux (server for Linux is still work in progress).
 - Switch active machine by double tapping the right ctrl key.
 
 ## Installation
@@ -16,7 +16,7 @@ A [KVM switch software](https://en.wikipedia.org/wiki/KVM_switch).
 
 ### Build
 
-- Clone this repository.
+- Clone the release branch `git clone -b release git@github.com:kafji/duangler.git`.
 - Run `cargo build --release`.
 - Find binaries in `target/release` directory.
 
@@ -43,6 +43,12 @@ port = 3000
 # This server IP address.
 # This field is used to generate TLS key at runtime.
 addr = "192.168.0.1"
+
+[server.linux]
+# replace this fields with input device path listed in `evtest`
+keyboard_device = "/dev/input/event1"
+mouse_device = "/dev/input/event2"
+# touchpad_device = "/dev/input/event3"
 ```
 
 - Run server in sudo mode e.g.
@@ -122,12 +128,12 @@ sudo ./duangler-client
 - Replace values in the client section with your configuration. e.g.
 
 ```toml
-[server]
-# Where the server will listen for incoming connections.
-port = 3000
-# This server IP address.
+[client]
+# This client IP address.
 # This field is used to generate TLS key at runtime.
-addr = "192.168.0.1"
+addr = "192.168.0.2"
+# Address of the server the client will connect to.
+server_addr = "192.168.0.1:3000"
 ```
 
 - Run server by double clicking `duangler-server.exe`.

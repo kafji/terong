@@ -1,40 +1,54 @@
 use super::{controller::InputController, event::LocalInputEvent};
-use crate::transport::protocol::{InputEvent, KeyCode, MouseButton};
+use crate::transport::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection};
 use anyhow::Error;
-use evdev_rs::{enums::EventCode, Device, GrabMode, InputEvent as LinuxInputEvent, ReadFlag};
+use evdev_rs::{
+    enums::{EventCode, EV_REL},
+    Device, GrabMode, InputEvent as LinuxInputEvent, ReadFlag,
+};
+use futures::future;
 use std::{
+    cmp::Ordering,
     fs::File,
     ops::{Deref, DerefMut},
-    time::Instant,
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 use tokio::{
     sync::mpsc,
     task::{self, JoinHandle},
+    try_join,
 };
 use tracing::warn;
 
-pub fn start(event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
-    run(event_tx)
+pub fn start(
+    keyboard_device: Option<PathBuf>,
+    mouse_device: Option<PathBuf>,
+    touchpad_device: Option<PathBuf>,
+    event_tx: mpsc::Sender<InputEvent>,
+) -> JoinHandle<()> {
+    run(keyboard_device, mouse_device, touchpad_device, event_tx).unwrap()
 }
 
 /// RAII ensuring the device's grab mode will be set to ungrab
 /// when it is dropped.
 #[derive(Debug)]
-struct DeviceGuard(Device);
+struct Ungrabber(Device);
 
-impl Drop for DeviceGuard {
+impl Drop for Ungrabber {
     fn drop(&mut self) {
-        self.0.grab(GrabMode::Ungrab).unwrap();
+        self.0
+            .grab(GrabMode::Ungrab)
+            .expect("failed to ungrab device");
     }
 }
 
-impl From<Device> for DeviceGuard {
+impl From<Device> for Ungrabber {
     fn from(x: Device) -> Self {
         Self(x)
     }
 }
 
-impl Deref for DeviceGuard {
+impl Deref for Ungrabber {
     type Target = Device;
 
     fn deref(&self) -> &Self::Target {
@@ -42,27 +56,32 @@ impl Deref for DeviceGuard {
     }
 }
 
-impl DerefMut for DeviceGuard {
+impl DerefMut for Ungrabber {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-fn read_input_source(
+fn read_input_source<F>(
     device: &mut Device,
-    controller: &mut InputController<Instant>,
-) -> Result<(), Error> {
+    controller: Arc<Mutex<InputController>>,
+    mut map: F,
+) -> Result<(), Error>
+where
+    F: FnMut(&LinuxInputEvent) -> Option<LocalInputEvent>,
+{
     loop {
         let (_, event) = device.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
-        let event = linux_event_to_local_event(&event);
+        let event = map(&event);
         if let Some(event) = event {
-            let should_capture = controller.on_input_event(event)?;
-            set_capture_input(device, should_capture)?;
+            let mut controller = controller.lock().unwrap();
+            let consume_input = controller.on_input_event(event)?;
+            set_consume_input(device, consume_input)?;
         }
     }
 }
 
-fn set_capture_input(device: &mut Device, flag: bool) -> Result<(), Error> {
+fn set_consume_input(device: &mut Device, flag: bool) -> Result<(), Error> {
     let mode = if flag {
         GrabMode::Grab
     } else {
@@ -71,27 +90,61 @@ fn set_capture_input(device: &mut Device, flag: bool) -> Result<(), Error> {
     device.grab(mode).map_err(Into::into)
 }
 
-fn run(event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
-    run2(event_tx).unwrap()
-}
+fn run(
+    keyboard_device: Option<PathBuf>,
+    mouse_device: Option<PathBuf>,
+    touchpad_device: Option<PathBuf>,
+    event_tx: mpsc::Sender<InputEvent>,
+) -> Result<JoinHandle<()>, Error> {
+    let controller = Arc::new(Mutex::new(InputController::new(event_tx)));
 
-fn run2(event_tx: mpsc::Sender<InputEvent>) -> Result<JoinHandle<()>, Error> {
-    let mut controller = InputController::new(event_tx);
+    let handle = task::spawn(async move {
+        let keyboard = keyboard_device
+            .map(|x| spawn_listener(x, controller.clone(), map_keyboard_event))
+            .transpose()
+            .unwrap()
+            .unwrap_or_else(|| task::spawn(future::ready(())));
 
-    let mut device = {
-        let file = File::open("/dev/input/event3")?;
-        let dev = Device::new_from_file(file)?;
-        DeviceGuard::from(dev)
-    };
+        let mouse = mouse_device
+            .map(|x| spawn_listener(x, controller.clone(), map_mouse_event))
+            .transpose()
+            .unwrap()
+            .unwrap_or_else(|| task::spawn(future::ready(())));
 
-    let input_source_handler = task::spawn_blocking(move || {
-        read_input_source(&mut device, &mut controller).unwrap();
+        let touchpad = touchpad_device
+            .map(|x| spawn_listener(x, controller.clone(), |_| None))
+            .transpose()
+            .unwrap()
+            .unwrap_or_else(|| task::spawn(future::ready(())));
+
+        try_join!(keyboard, mouse, touchpad).unwrap();
     });
 
-    Ok(input_source_handler)
+    Ok(handle)
 }
 
-fn linux_event_to_local_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
+fn spawn_listener<F>(
+    device: PathBuf,
+    controller: Arc<Mutex<InputController>>,
+    map: F,
+) -> Result<JoinHandle<()>, Error>
+where
+    F: FnMut(&LinuxInputEvent) -> Option<LocalInputEvent> + Send + 'static,
+{
+    let mut device = {
+        let file = File::open(device)?;
+        let dev = Device::new_from_file(file)?;
+        Ungrabber::from(dev)
+    };
+
+    let handle = task::spawn_blocking(move || {
+        read_input_source(&mut device, controller, map).unwrap();
+    });
+
+    Ok(handle)
+}
+
+fn map_keyboard_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
     let LinuxInputEvent {
         event_code, value, ..
     } = x;
@@ -114,9 +167,33 @@ fn linux_event_to_local_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
                 }
             }
         }
-        EventCode::EV_REL(_) => todo!(),
-        EventCode::EV_ABS(_) => todo!(),
-        EventCode::EV_REP(_) => todo!(),
+        _ => None,
+    }
+}
+
+fn map_mouse_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
+    let LinuxInputEvent {
+        event_code, value, ..
+    } = x;
+    match event_code {
+        EventCode::EV_REL(ev_rel) => match ev_rel {
+            EV_REL::REL_WHEEL => match value.cmp(&0) {
+                Ordering::Less => LocalInputEvent::MouseScroll {
+                    direction: MouseScrollDirection::Down {
+                        clicks: *value as _,
+                    },
+                }
+                .into(),
+                Ordering::Equal => None,
+                Ordering::Greater => LocalInputEvent::MouseScroll {
+                    direction: MouseScrollDirection::Up {
+                        clicks: *value as _,
+                    },
+                }
+                .into(),
+            },
+            _ => None,
+        },
         _ => None,
     }
 }

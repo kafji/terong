@@ -80,22 +80,29 @@ impl TryInto<Vec<LinuxInputEvent>> for InputEvent {
         let time = SystemTime::now().try_into()?;
 
         let es = match self {
+            // mouse move
             InputEvent::MouseMove { dx, dy } => vec![
                 (EventCode::EV_REL(EV_REL::REL_X), dx),
                 (EventCode::EV_REL(EV_REL::REL_Y), dy),
             ],
+
+            // mouse click
             InputEvent::MouseButtonDown { button } => {
                 vec![(EventCode::EV_KEY(button.into()), 1)]
             }
             InputEvent::MouseButtonUp { button } => {
                 vec![(EventCode::EV_KEY(button.into()), 0)]
             }
+
+            // mouse scroll
             InputEvent::MouseScroll {
                 direction: MouseScrollDirection::Up { clicks },
             } => vec![(EventCode::EV_REL(EV_REL::REL_WHEEL), clicks as i16)],
             InputEvent::MouseScroll {
                 direction: MouseScrollDirection::Down { clicks },
             } => vec![(EventCode::EV_REL(EV_REL::REL_WHEEL), -(clicks as i16))],
+
+            // keypress
             InputEvent::KeyDown { key } => vec![(EventCode::EV_KEY(key.into()), 1)],
             InputEvent::KeyRepeat { key } => vec![(EventCode::EV_KEY(key.into()), 2)],
             InputEvent::KeyUp { key } => vec![(EventCode::EV_KEY(key.into()), 0)],
