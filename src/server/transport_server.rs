@@ -320,6 +320,8 @@ async fn run_session(session: Session) -> Result<(), Error> {
         }
     }
 
+    println!("Disconnected from client at {}.", peer_addr.ip());
+
     Result::<_, Error>::Ok(())
 }
 

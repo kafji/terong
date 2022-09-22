@@ -46,7 +46,7 @@ async fn run_transport_client(args: TransportClient) {
         if let Err(err) = connect(&args).await {
             log_error!(err);
 
-            sleep(Duration::from_secs(3)).await;
+            sleep(Duration::from_secs(5)).await;
         }
     }
 }
@@ -77,9 +77,12 @@ async fn connect(env: &TransportClient) -> Result<(), Error> {
         transporter,
         state: Default::default(),
     };
-    run_session(session).await?;
 
-    Ok(())
+    let r = run_session(session).await;
+
+    println!("Disconnected from server at {}.", server_addr.ip());
+
+    r
 }
 
 #[derive(Debug)]
