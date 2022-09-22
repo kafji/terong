@@ -25,7 +25,7 @@ use tokio::{
     time::sleep,
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 

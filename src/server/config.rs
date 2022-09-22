@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct ServerConfig {
