@@ -119,7 +119,7 @@ sudo ./duangler-client
 
 <summary>Windows</summary>
 
-- Copy the server binary `duangler-server.exe` into a directory.
+- Copy the server binary `duangler-client.exe` into a directory.
 
 - Copy config file example [example.duangler.toml](example.duangler.toml) into the same directory.
 
@@ -136,6 +136,6 @@ addr = "192.168.0.2"
 server_addr = "192.168.0.1:3000"
 ```
 
-- Run server by double clicking `duangler-server.exe`.
+- Run server by double clicking `duangler-client.exe`.
 
-<details>
+</details>
