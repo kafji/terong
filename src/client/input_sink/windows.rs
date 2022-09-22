@@ -68,8 +68,8 @@ pub fn start(mut event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
                         dx: Default::default(),
                         dy: Default::default(),
                         mouseData: match button {
-                            MouseButton::Left => XBUTTON1.0 as _,
-                            MouseButton::Right => XBUTTON2.0 as _,
+                            MouseButton::Mouse4 => XBUTTON1.0 as _,
+                            MouseButton::Mouse5 => XBUTTON2.0 as _,
                             _ => 0,
                         },
                         dwFlags: match button {
