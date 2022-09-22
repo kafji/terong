@@ -119,7 +119,7 @@ sudo ./duangler-client
 
 <summary>Windows</summary>
 
-- Copy the server binary `duangler-client.exe` into a directory.
+- Copy the client binary `duangler-client.exe` into a directory.
 
 - Copy config file example [example.duangler.toml](example.duangler.toml) into the same directory.
 
