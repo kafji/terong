@@ -8,7 +8,7 @@ use tokio::fs;
 
 /// Get value of hidden configuration to disable TLS.
 pub fn no_tls() -> bool {
-    env::var("TERONG_NO_TLS")
+    env::var("DUANGLER_NO_TLS")
         .ok()
         .and_then(|x| x.parse::<u8>().ok())
         .map(|x| x == 1)
@@ -24,7 +24,7 @@ pub struct Config {
 
 impl Config {
     pub async fn read_config() -> Result<Self, Error> {
-        let path = "./terong.toml";
+        let path = "./duangler.toml";
         let config = fs::read_to_string(path).await?;
         let config = toml::from_str(&config)?;
         Ok(config)
