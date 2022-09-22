@@ -148,9 +148,7 @@ pub enum KeyCode {
 
 /// Define a bidirectional injective conversion.
 ///
-/// Given a set A and a set B. This macro takes definition of `A -> B`, in which it will generates functions `A -> B` and `B -> Option A`.
-///
-/// Its injective property would not be typechecked.
+/// Given a set A and a set B. This macro takes definition of `A -> B` and generates functions `A -> B` and `B -> Option A`.
 macro_rules! def_conversion {
     (
         $l_ty:ty,
@@ -351,7 +349,7 @@ pub mod windows {
         pub VirtualKey = u16;
     }
 
-    // Define value conversion between [KeyCode] and Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes.
+    // Conversion between [KeyCode] and Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes.
     def_conversion!(KeyCode, VirtualKey, {
         Escape = VK_ESCAPE.0.into(),
 

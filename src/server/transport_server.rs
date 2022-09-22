@@ -2,7 +2,6 @@ use crate::{
     config::no_tls,
     log_error,
     transport::{
-        generate_tls_key_pair,
         protocol::{
             ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
             Sha256, UpgradeTransportRequest, UpgradeTransportResponse,
@@ -15,7 +14,7 @@ use futures::{future, FutureExt};
 use std::{
     fmt::Debug,
     io::Write,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr, SocketAddrV4},
     sync::{Arc, Mutex},
 };
 use tokio::{
@@ -30,15 +29,35 @@ use tracing::{debug, error, info, warn};
 
 type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
 
-pub fn start(proto_event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
-    task::spawn(async move { run(proto_event_rx).await.unwrap() })
+#[derive(Debug)]
+pub struct TransportServer {
+    pub port: u16,
+    pub event_rx: mpsc::Receiver<InputEvent>,
+    pub tls_cert: Certificate,
+    pub tls_key: PrivateKey,
 }
 
-async fn run(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
-    let server_addr: SocketAddr = "0.0.0.0:3000".parse().context("invalid socket address")?;
+pub fn start(env: TransportServer) -> JoinHandle<()> {
+    task::spawn(async move { run(env).await })
+}
+
+async fn run(env: TransportServer) {
+    let TransportServer {
+        port,
+        mut event_rx,
+        tls_cert,
+        tls_key,
+    } = env;
+
+    let tls_cert = Arc::new(tls_cert);
+    let tls_key = Arc::new(tls_key);
+
+    let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), port);
 
     info!("listening at {}", server_addr);
-    let listener = TcpListener::bind(server_addr).await?;
+    let listener = TcpListener::bind(server_addr)
+        .await
+        .expect("failed to bind server");
 
     let mut session_handler: Option<SessionHandler> = None;
 
@@ -66,16 +85,23 @@ async fn run(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
                 }
             }
 
-            Ok((stream, peer_addr)) = listener.accept() => handle_incoming_connection(&mut session_handler, stream, peer_addr).await,
+            Ok((stream, peer_addr)) = listener.accept() => {
+                handle_incoming_connection(
+                    tls_cert.clone(),
+                    tls_key.clone(),
+                    &mut session_handler,
+                    stream, peer_addr
+                ).await
+            },
         }
     }
-
-    Ok(())
 }
 
 // Handle incoming connection, create a new session if it's not exist, otherwise
 // drop the connection.
 async fn handle_incoming_connection(
+    tls_cert: Arc<Certificate>,
+    tls_key: Arc<PrivateKey>,
     session_handler: &mut Option<SessionHandler>,
     stream: TcpStream,
     peer_addr: SocketAddr,
@@ -83,7 +109,7 @@ async fn handle_incoming_connection(
     info!(?peer_addr, "received incoming connection");
     if session_handler.is_none() {
         let transporter = Transporter::Plain(Transport::new(stream));
-        let handler = spawn_session(peer_addr, transporter);
+        let handler = spawn_session(tls_cert, tls_key, peer_addr, transporter);
         *session_handler = Some(handler);
     } else {
         info!(?peer_addr, "dropping incoming connection")
@@ -118,6 +144,8 @@ impl SessionHandler {
 
 #[derive(Debug)]
 struct Session {
+    server_tls_cert: Arc<Certificate>,
+    server_tls_key: Arc<PrivateKey>,
     peer_addr: SocketAddr,
     transporter: ServerTransporter,
     event_rx: mpsc::Receiver<InputEvent>,
@@ -132,12 +160,19 @@ enum State {
 }
 
 /// Creates a new session.
-fn spawn_session(peer_addr: SocketAddr, transporter: ServerTransporter) -> SessionHandler {
+fn spawn_session(
+    tls_cert: Arc<Certificate>,
+    tls_key: Arc<PrivateKey>,
+    peer_addr: SocketAddr,
+    transporter: ServerTransporter,
+) -> SessionHandler {
     let (event_tx, event_rx) = mpsc::channel(1);
 
     let state: Arc<Mutex<State>> = Default::default();
 
     let session = Session {
+        server_tls_cert: tls_cert,
+        server_tls_key: tls_key,
         peer_addr,
         transporter,
         event_rx,
@@ -161,6 +196,8 @@ fn spawn_session(peer_addr: SocketAddr, transporter: ServerTransporter) -> Sessi
 /// The session loop.
 async fn run_session(session: Session) -> Result<(), Error> {
     let Session {
+        server_tls_cert,
+        server_tls_key,
         peer_addr,
         mut transporter,
         mut event_rx,
@@ -200,13 +237,11 @@ async fn run_session(session: Session) -> Result<(), Error> {
                     break;
                 }
 
-                debug!("generating tls key pair");
-                let (server_tls_cert, server_tls_key) =
-                    generate_tls_key_pair("192.168.123.31".parse().unwrap())?;
-
                 // request upgrade transport
+
+                let server_tls_cert_hash = Sha256::from_bytes(server_tls_cert.as_ref().as_ref());
                 let msg: HelloReply = UpgradeTransportRequest {
-                    server_tls_cert_hash: Sha256::from_bytes(server_tls_cert.as_ref()),
+                    server_tls_cert_hash,
                 }
                 .into();
                 transport.send_msg(msg.into()).await?;
@@ -223,29 +258,10 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         bail!("expecting upgrade transport message, but was {:?}", msg);
                     };
 
-                let prompt_answer = {
-                    let client_tls_cert_hash = client_tls_cert_hash.clone();
-                    task::spawn_blocking(move || {
-                        let mut stdout = std::io::stdout();
-                        write!(
-                            stdout,
-                            "Connect with client at {} and TLS certificate hash {}?\ny/(n): ",
-                            peer_addr.ip(),
-                            client_tls_cert_hash
-                        )
-                        .unwrap();
-                        stdout.flush().unwrap();
-                        let mut buf = String::new();
-                        std::io::stdin()
-                            .read_line(&mut buf)
-                            .expect("failed to read prompt answer");
-                        let answer = buf.trim();
-                        answer == "y" || answer == "Y"
-                    })
-                }
-                .await?;
-
-                if !prompt_answer {
+                if !task::block_in_place(|| {
+                    verify_client_cert(&peer_addr.ip(), &client_tls_cert_hash)
+                })? {
+                    debug!(?peer_addr, "client rejected");
                     break;
                 }
 
@@ -254,19 +270,26 @@ async fn run_session(session: Session) -> Result<(), Error> {
                 if no_tls {
                     warn!("tls disabled");
                 } else {
-                    transporter = transporter
-                        .upgrade(move |stream| {
-                            upgrade_server_stream(
-                                stream,
-                                server_tls_cert,
-                                server_tls_key,
-                                client_tls_cert_hash,
-                            )
-                        })
-                        .await?;
+                    {
+                        let server_tls_cert = server_tls_cert.as_ref().clone();
+                        let server_tls_key = server_tls_key.as_ref().clone();
+                        let client_tls_cert_hash = client_tls_cert_hash.clone();
+                        transporter = transporter
+                            .upgrade(move |stream| {
+                                upgrade_server_stream(
+                                    stream,
+                                    server_tls_cert,
+                                    server_tls_key,
+                                    client_tls_cert_hash,
+                                )
+                            })
+                            .await?;
+                    }
                 }
 
                 info!("session established");
+
+                println!("Connected to client at {}.", peer_addr.ip());
 
                 State::Established
             }
@@ -298,6 +321,23 @@ async fn run_session(session: Session) -> Result<(), Error> {
     }
 
     Result::<_, Error>::Ok(())
+}
+
+fn verify_client_cert(client_addr: &IpAddr, client_cert: &Sha256) -> Result<bool, Error> {
+    {
+        let mut stdout = std::io::stdout();
+        write!(
+            stdout,
+            "Accept client at {} with TLS certificate hash {}? y/(n): ",
+            client_addr, client_cert
+        )?;
+        stdout.flush()?;
+    }
+
+    let mut buf = String::new();
+    std::io::stdin().read_line(&mut buf)?;
+    let answer = buf.trim();
+    Ok(answer == "y" || answer == "Y")
 }
 
 async fn upgrade_server_stream<S>(

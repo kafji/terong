@@ -9,15 +9,15 @@ use std::{
 use tokio::sync::mpsc;
 use tracing::debug;
 
-pub struct InputController<Order> {
+pub struct InputController<OrderKey> {
     /// Buffer of local input events.
-    event_buf: EventBuffer<Order>,
+    event_buf: EventBuffer<OrderKey>,
     /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
     /// If this is true input source should be consumed from its host and propagated to the input sink.
     relay: bool,
     /// Last time we detect inputs for toggling the relay flag.
-    relay_toggled_at: Option<Order>,
+    relay_toggled_at: Option<OrderKey>,
 }
 
 impl<T> InputController<T> {
@@ -72,11 +72,11 @@ impl InputController<Instant> {
 }
 
 #[derive(Debug)]
-struct EventBuffer<Order> {
-    buf: Vec<(LocalInputEvent, Order)>,
+struct EventBuffer<T> {
+    buf: Vec<(LocalInputEvent, T)>,
 }
 
-impl<Order> Default for EventBuffer<Order> {
+impl<T> Default for EventBuffer<T> {
     fn default() -> Self {
         Self {
             buf: Default::default(),
@@ -84,14 +84,14 @@ impl<Order> Default for EventBuffer<Order> {
     }
 }
 
-impl<Order> EventBuffer<Order>
+impl<OrderKey> EventBuffer<OrderKey>
 where
-    Order: Sub<Output = Duration> + Copy,
+    OrderKey: Sub<Output = Duration> + Copy,
 {
     /// Add event to buffer and drop outdated events.
     ///
     /// Outdated events are events older than 300 milliseconds from the newest event.
-    fn push_input_event(&mut self, event: LocalInputEvent, time: Order) {
+    fn push_input_event(&mut self, event: LocalInputEvent, time: OrderKey) {
         // drop outdated events
         let part = self.buf.partition_point(|(_, t)| {
             let d = time - *t;
@@ -103,23 +103,23 @@ where
     }
 }
 
-impl<Order> EventBuffer<Order> {
+impl<T> EventBuffer<T> {
     fn clear(&mut self) {
         self.buf.clear()
     }
 }
 
-impl<Order> EventBuffer<Order>
+impl<OrderKey> EventBuffer<OrderKey>
 where
-    Order: Ord,
+    OrderKey: Ord,
 {
     /// Query recent pressed keys.
     ///
     /// Recent pressed keys are keys where its key up and key down events exist in the buffer.
     fn recent_pressed_keys<'a, 'b>(
         &'a self,
-        since: Option<&'b Order>,
-    ) -> impl Iterator<Item = (&KeyCode, &Order)>
+        since: Option<&'b OrderKey>,
+    ) -> impl Iterator<Item = (&KeyCode, &OrderKey)>
     where
         'b: 'a,
     {
@@ -134,39 +134,41 @@ where
 }
 
 #[derive(Debug)]
-enum KeyPressEvent<'a, Order> {
-    Down(KeyPress<'a, Order>),
-    Up(KeyPress<'a, Order>),
+enum KeyPressEvent<'a, T> {
+    Down(KeyPress<'a, T>),
+    Up(KeyPress<'a, T>),
 }
 
 #[derive(Debug)]
-struct KeyPress<'a, Order> {
+struct KeyPress<'a, OrderKey> {
     key: &'a KeyCode,
-    order: &'a Order,
+    order_key: &'a OrderKey,
 }
 
-impl<'a, Order> KeyPressEvent<'a, Order> {
-    fn from_local_input_event(event: &'a LocalInputEvent, order: &'a Order) -> Option<Self> {
+impl<'a, OrderKey> KeyPressEvent<'a, OrderKey> {
+    fn from_local_input_event(event: &'a LocalInputEvent, order_key: &'a OrderKey) -> Option<Self> {
         match event {
-            LocalInputEvent::KeyDown { key } => KeyPressEvent::Down(KeyPress { key, order }).into(),
-            LocalInputEvent::KeyUp { key } => KeyPressEvent::Up(KeyPress { key, order }).into(),
+            LocalInputEvent::KeyDown { key } => {
+                KeyPressEvent::Down(KeyPress { key, order_key }).into()
+            }
+            LocalInputEvent::KeyUp { key } => KeyPressEvent::Up(KeyPress { key, order_key }).into(),
             _ => None,
         }
     }
 }
 
-struct RecentKeyPresses<'a, Order> {
-    events: Box<dyn Iterator<Item = KeyPressEvent<'a, Order>> + 'a>,
-    queue: VecDeque<KeyPressEvent<'a, Order>>,
+struct RecentKeyPresses<'a, T> {
+    events: Box<dyn Iterator<Item = KeyPressEvent<'a, T>> + 'a>,
+    queue: VecDeque<KeyPressEvent<'a, T>>,
 }
 
-impl<'a, Order> RecentKeyPresses<'a, Order>
+impl<'a, OrderKey> RecentKeyPresses<'a, OrderKey>
 where
-    Order: Ord,
+    OrderKey: Ord,
 {
     fn new<'b>(
-        events: impl Iterator<Item = KeyPressEvent<'a, Order>> + 'a,
-        since: Option<&'b Order>,
+        events: impl Iterator<Item = KeyPressEvent<'a, OrderKey>> + 'a,
+        since: Option<&'b OrderKey>,
     ) -> Self
     where
         'b: 'a,
@@ -174,8 +176,8 @@ where
         let events: Box<dyn Iterator<Item = _>> = match since {
             Some(since) => {
                 let xs = events.filter(|x| match x {
-                    KeyPressEvent::Down(x) => x.order > since,
-                    KeyPressEvent::Up(x) => x.order > since,
+                    KeyPressEvent::Down(x) => x.order_key > since,
+                    KeyPressEvent::Up(x) => x.order_key > since,
                 });
                 Box::new(xs)
             }
@@ -272,6 +274,11 @@ impl<'a, T> Iterator for RecentKeyPresses<'a, T> {
             None => return None,
         };
 
-        Some((key_up.key, key_up.order))
+        Some((key_up.key, key_up.order_key))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }

@@ -1,6 +1,7 @@
 //! Applications configuration.
 
-use crate::client::config::ClientConfig;
+use crate::{client::config::ClientConfig, server::config::ServerConfig};
+use anyhow::Error;
 use serde::Deserialize;
 use std::env;
 use tokio::fs;
@@ -18,19 +19,22 @@ pub fn no_tls() -> bool {
 #[derive(Clone, Deserialize, Debug)]
 pub struct Config {
     client: Option<ClientConfig>,
+    server: Option<ServerConfig>,
 }
 
 impl Config {
-    pub async fn read_config() -> Self {
+    pub async fn read_config() -> Result<Self, Error> {
         let path = "./terong.toml";
-        let config = fs::read_to_string(path)
-            .await
-            .expect("failed to read config file");
-        let config = toml::from_str(&config).expect("failed to parse config");
-        config
+        let config = fs::read_to_string(path).await?;
+        let config = toml::from_str(&config)?;
+        Ok(config)
     }
 
     pub fn client(self) -> ClientConfig {
         self.client.expect("missing client config")
+    }
+
+    pub fn server(self) -> ServerConfig {
+        self.server.expect("missing server config")
     }
 }

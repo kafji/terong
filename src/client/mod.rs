@@ -6,7 +6,7 @@ pub mod config;
 use crate::{
     client::{config::ClientConfig, transport_client::TransportClient},
     config::Config,
-    logging::init_logger,
+    logging::init_tracing,
     transport::{generate_tls_key_pair, protocol::Sha256},
 };
 use tokio::sync::mpsc;
@@ -14,17 +14,20 @@ use tracing::info;
 
 /// Run the client application.
 pub async fn run() {
-    init_logger();
+    init_tracing();
 
-    let ClientConfig { addr, server_addr } = Config::read_config().await.client();
-    let (client_tls_cert, client_tls_key) =
-        generate_tls_key_pair(addr).expect("failed to generate tls key pair");
+    let ClientConfig { addr, server_addr } = Config::read_config()
+        .await
+        .expect("failed to read config")
+        .client();
+
+    let (tls_cert, tls_key) = generate_tls_key_pair(addr).expect("failed to generate tls key pair");
 
     info!("starting client app");
 
     println!(
-        "Client TLS certificate hash: {}.",
-        Sha256::from_bytes(client_tls_cert.as_ref())
+        "Client TLS certificate hash is {}.",
+        Sha256::from_bytes(tls_cert.as_ref())
     );
 
     // channel for input events from the transport client to the input sink
@@ -36,8 +39,8 @@ pub async fn run() {
         let env = TransportClient {
             server_addr,
             event_tx,
-            client_tls_cert,
-            client_tls_key,
+            tls_cert,
+            tls_key,
         };
         transport_client::start(env)
     };

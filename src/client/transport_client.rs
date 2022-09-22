@@ -33,8 +33,8 @@ type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMess
 pub struct TransportClient {
     pub server_addr: SocketAddr,
     pub event_tx: mpsc::Sender<InputEvent>,
-    pub client_tls_cert: Certificate,
-    pub client_tls_key: PrivateKey,
+    pub tls_cert: Certificate,
+    pub tls_key: PrivateKey,
 }
 
 pub fn start(args: TransportClient) -> JoinHandle<()> {
@@ -55,8 +55,8 @@ async fn connect(env: &TransportClient) -> Result<(), Error> {
     let TransportClient {
         server_addr,
         event_tx,
-        client_tls_cert,
-        client_tls_key,
+        tls_cert,
+        tls_key,
     } = env;
 
     info!(?server_addr, "connecting to server");
@@ -72,8 +72,8 @@ async fn connect(env: &TransportClient) -> Result<(), Error> {
     let session = Session {
         server_addr,
         event_tx,
-        client_tls_cert,
-        client_tls_key,
+        client_tls_cert: tls_cert,
+        client_tls_key: tls_key,
         transporter,
         state: Default::default(),
     };
@@ -163,6 +163,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                 }
 
                 info!("session established");
+
+                println!("Connected to server at {}.", server_addr.ip());
 
                 SessionState::Established
             }
