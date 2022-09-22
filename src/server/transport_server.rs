@@ -37,8 +37,8 @@ pub struct TransportServer {
     pub tls_key: PrivateKey,
 }
 
-pub fn start(env: TransportServer) -> JoinHandle<()> {
-    task::spawn(async move { run(env).await })
+pub fn start(args: TransportServer) -> JoinHandle<()> {
+    task::spawn(async move { run(args).await })
 }
 
 async fn run(env: TransportServer) {

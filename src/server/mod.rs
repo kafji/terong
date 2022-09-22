@@ -48,13 +48,13 @@ pub async fn run() {
     };
 
     let server = {
-        let env = TransportServer {
+        let args = TransportServer {
             port,
             event_rx,
             tls_cert,
             tls_key,
         };
-        transport_server::start(env)
+        transport_server::start(args)
     };
 
     try_join!(input_source, server).unwrap();
