@@ -321,7 +321,7 @@ dependencies = [
 [[package]]
 name = "macross"
 version = "0.0.0"
-source = "git+https://github.com/kafji/macross#976a6555eb5c88bb47b296d5ab2c6d5d03a11a1f"
+source = "git+https://github.com/kafji/macross#d7e0cc5675cb35dcfa25ad0fce07f0c8dd214519"
 
 [[package]]
 name = "matchers"
