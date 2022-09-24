@@ -211,8 +211,6 @@ async fn run_session(session: Session) -> Result<(), Error> {
             *state
         };
 
-        debug!(?state);
-
         let new_state = match state {
             State::Handshaking => {
                 let transport = transporter.plain()?;

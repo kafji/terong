@@ -3,7 +3,7 @@
 use crate::{client::config::ClientConfig, server::config::ServerConfig};
 use anyhow::{anyhow, Error};
 use serde::Deserialize;
-use std::{convert::identity, env, path::PathBuf};
+use std::{env, path::PathBuf};
 use tokio::{fs::File, io::AsyncReadExt};
 use tracing::debug;
 
@@ -78,5 +78,5 @@ fn config_paths() -> impl Iterator<Item = PathBuf> {
         .map(|x| x.join("net.kafji.duangler").join("duangler.toml")),
     ]
     .into_iter()
-    .filter_map(identity)
+    .flatten()
 }

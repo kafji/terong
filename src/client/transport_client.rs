@@ -113,8 +113,6 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
     } = session;
 
     loop {
-        debug!(?state);
-
         state = match state {
             SessionState::Handshaking => {
                 // get transport
@@ -175,13 +173,10 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
             SessionState::Established => {
                 let messenger = transporter.any();
 
-                debug!("waiting for message");
                 let msg = messenger
                     .recv_msg()
                     .await
                     .context("failed to receive message")?;
-
-                debug!(?msg, "received message");
 
                 let event = match msg {
                     ServerMessage::Event(event) => event,
