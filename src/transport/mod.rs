@@ -1,7 +1,7 @@
 pub mod protocol;
 
 use self::protocol::{ClientMessage, ServerMessage, Sha256};
-use anyhow::{bail, Error};
+use anyhow::{bail, Context, Error};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
@@ -59,7 +59,9 @@ async fn send_msg(
 ///
 /// Client should ignore this message.
 async fn send_poke(sink: &mut (impl AsyncWrite + Unpin)) -> Result<(), Error> {
-    sink.write_u16(0).await?;
+    sink.write_u16(0)
+        .await
+        .context("failed to send poke message")?;
     Ok(())
 }
 

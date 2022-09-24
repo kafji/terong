@@ -298,17 +298,19 @@ async fn run_session(session: Session) -> Result<(), Error> {
                 select! {
                     event = event_rx.recv() => {
                         match event {
-                            Some(event) => {
-                                State::RelayingEvent { event }
-                            },
+                            Some(event) => State::RelayingEvent { event },
                             None => break,
                         }
                     }
 
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {
                         let closed = transport.is_closed().await;
+
+                        debug!(?closed, "client connection status");
+
                         if closed {
                             println!("Disconnected from client at {}.", peer_addr.ip());
+
                             break;
                         } else {
                             State::Idle
@@ -320,9 +322,8 @@ async fn run_session(session: Session) -> Result<(), Error> {
             State::RelayingEvent { event } => {
                 let transport = transporter.secure()?;
 
-                let msg = event.into();
                 transport
-                    .send_msg(msg)
+                    .send_msg(event.into())
                     .await
                     .context("failed to send message")?;
 
@@ -337,7 +338,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
         }
     }
 
-    Result::<_, Error>::Ok(())
+    Ok(())
 }
 
 fn verify_client_cert(client_addr: &IpAddr, client_cert: &Sha256) -> Result<bool, Error> {
