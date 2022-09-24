@@ -295,7 +295,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
             State::Idle => {
                 let transport = transporter.secure()?;
 
-                select! { biased;
+                select! {
                     event = event_rx.recv() => {
                         match event {
                             Some(event) => {
