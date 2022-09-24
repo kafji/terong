@@ -330,8 +330,8 @@ pub mod linux {
         Left => BTN_LEFT,
         Right => BTN_RIGHT,
         Middle => BTN_MIDDLE,
-        Mouse4 => BTN_4,
-        Mouse5 => BTN_5,
+        Mouse4 => BTN_SIDE,
+        Mouse5 => BTN_EXTRA,
     });
 }
 
