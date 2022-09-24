@@ -1,5 +1,4 @@
 use crate::{
-    config::no_tls,
     log_error,
     transport::{
         protocol::{
@@ -25,7 +24,7 @@ use tokio::{
     time::sleep,
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::{debug, info, warn};
+use tracing::info;
 
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
@@ -144,24 +143,19 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                 transport.send_msg(msg.into()).await?;
 
                 // upgrade to tls
-                let no_tls = no_tls();
-                if no_tls {
-                    warn!("tls disabled")
-                } else {
-                    transporter = transporter
-                        .upgrade(move |stream| async move {
-                            upgrade_client_stream(
-                                stream,
-                                client_tls_cert.to_owned(),
-                                client_tls_key.to_owned(),
-                                server_tls_cert,
-                                server_addr.ip(),
-                            )
-                            .await
-                        })
-                        .await?;
-                    info!(?server_addr, "connection upgraded");
-                }
+                transporter = transporter
+                    .upgrade(move |stream| async move {
+                        upgrade_client_stream(
+                            stream,
+                            client_tls_cert.to_owned(),
+                            client_tls_key.to_owned(),
+                            server_tls_cert,
+                            server_addr.ip(),
+                        )
+                        .await
+                    })
+                    .await?;
+                info!(?server_addr, "connection upgraded");
 
                 info!("session established");
 

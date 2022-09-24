@@ -19,7 +19,11 @@ use std::{
     net::IpAddr,
     time::SystemTime,
 };
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::{
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, Interest},
+    net::TcpStream,
+};
+use tokio_rustls::TlsStream;
 use tracing::debug;
 
 /// Protocol message marker trait.
@@ -48,6 +52,14 @@ async fn send_msg(
 
     sink.write_all(&buf).await?;
 
+    Ok(())
+}
+
+/// Sends 0 bytes message.
+///
+/// Client should ignore this message.
+async fn send_poke(sink: &mut (impl AsyncWrite + Unpin)) -> Result<(), Error> {
+    sink.write_u16(0).await?;
     Ok(())
 }
 
@@ -185,6 +197,26 @@ where
     pub async fn recv_msg(&mut self) -> Result<IN, Error> {
         let mut reader = self.as_msg_reader();
         reader.recv_msg().await
+    }
+}
+
+impl<IN, OUT> Transport<TcpStream, IN, OUT> {
+    pub async fn is_closed(&mut self) -> io::Result<bool> {
+        let readiness = self
+            .stream
+            .ready(Interest::READABLE.add(Interest::WRITABLE))
+            .await?;
+        let closed = readiness.is_read_closed() || readiness.is_write_closed();
+        Ok(closed)
+    }
+}
+
+impl<S, IN, OUT> Transport<TlsStream<S>, IN, OUT>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    pub async fn is_closed(&mut self) -> bool {
+        send_poke(&mut self.stream).await.is_err()
     }
 }
 

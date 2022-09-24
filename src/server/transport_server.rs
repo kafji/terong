@@ -1,5 +1,4 @@
 use crate::{
-    config::no_tls,
     log_error,
     transport::{
         protocol::{
@@ -16,6 +15,7 @@ use std::{
     io::Write,
     net::{IpAddr, SocketAddr, SocketAddrV4},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -25,7 +25,7 @@ use tokio::{
     task::{self, JoinError, JoinHandle},
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
 
@@ -138,7 +138,11 @@ impl SessionHandler {
 
     fn is_connected(&self) -> bool {
         let state = self.state.lock().unwrap();
-        matches!(*state, State::Established)
+        match &*state {
+            State::Handshaking => false,
+            State::Idle => true,
+            State::RelayingEvent { .. } => true,
+        }
     }
 }
 
@@ -156,7 +160,10 @@ struct Session {
 enum State {
     #[default]
     Handshaking,
-    Established,
+    Idle,
+    RelayingEvent {
+        event: InputEvent,
+    },
 }
 
 /// Creates a new session.
@@ -264,42 +271,54 @@ async fn run_session(session: Session) -> Result<(), Error> {
                 }
 
                 // upgrade to tls
-                let no_tls = no_tls();
-                if no_tls {
-                    warn!("tls disabled");
-                } else {
-                    {
-                        let server_tls_cert = server_tls_cert.as_ref().clone();
-                        let server_tls_key = server_tls_key.as_ref().clone();
-                        let client_tls_cert_hash = client_tls_cert_hash.clone();
-                        transporter = transporter
-                            .upgrade(move |stream| {
-                                upgrade_server_stream(
-                                    stream,
-                                    server_tls_cert,
-                                    server_tls_key,
-                                    client_tls_cert_hash,
-                                )
-                            })
-                            .await?;
-                    }
-                }
+                let server_tls_cert = server_tls_cert.as_ref().clone();
+                let server_tls_key = server_tls_key.as_ref().clone();
+                let client_tls_cert_hash = client_tls_cert_hash.clone();
+                transporter = transporter
+                    .upgrade(move |stream| {
+                        upgrade_server_stream(
+                            stream,
+                            server_tls_cert,
+                            server_tls_key,
+                            client_tls_cert_hash,
+                        )
+                    })
+                    .await?;
 
                 info!("session established");
 
                 println!("Connected to client at {}.", peer_addr.ip());
 
-                State::Established
+                State::Idle
             }
 
-            State::Established => {
-                let event = event_rx.recv().await;
-                let event = match event {
-                    Some(x) => x,
-                    None => break,
-                };
+            State::Idle => {
+                let transport = transporter.secure()?;
 
-                let transport = transporter.any();
+                select! { biased;
+                    event = event_rx.recv() => {
+                        match event {
+                            Some(event) => {
+                                State::RelayingEvent { event }
+                            },
+                            None => break,
+                        }
+                    }
+
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        let closed = transport.is_closed().await;
+                        if closed {
+                            println!("Disconnected from client at {}.", peer_addr.ip());
+                            break;
+                        } else {
+                            State::Idle
+                        }
+                    }
+                }
+            }
+
+            State::RelayingEvent { event } => {
+                let transport = transporter.secure()?;
 
                 let msg = event.into();
                 transport
@@ -307,7 +326,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                     .await
                     .context("failed to send message")?;
 
-                State::Established
+                State::Idle
             }
         };
 
@@ -317,8 +336,6 @@ async fn run_session(session: Session) -> Result<(), Error> {
             *state = new_state;
         }
     }
-
-    println!("Disconnected from client at {}.", peer_addr.ip());
 
     Result::<_, Error>::Ok(())
 }
