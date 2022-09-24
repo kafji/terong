@@ -74,7 +74,6 @@ where
     async fn fill_buf(&mut self, size: usize) -> Result<(), Error> {
         while self.buf.remaining() < size {
             let size = self.src.read_buf(&mut self.buf).await?;
-            debug!("read {} bytes from source", size);
             if size == 0 {
                 return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
             }
