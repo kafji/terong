@@ -1,4 +1,7 @@
 /target
 /.vscode
-duangler.toml
-*.pem*
+/duangler.toml
+/*.pem*
+/*.pem.bak*
+/duangler-client*
+/duangler-server*
