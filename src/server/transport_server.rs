@@ -199,6 +199,8 @@ fn spawn_session(
         if let Err(err) = run_session(session).await {
             log_error!(err);
         };
+
+        info!(?peer_addr, "disconnected from client");
     });
 
     SessionHandler {
@@ -283,8 +285,6 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         debug!(?closed, "client connection status");
 
                         if closed {
-                            info!(?peer_addr, "disconnected from client");
-
                             break;
                         } else {
                             SessionState::Idle

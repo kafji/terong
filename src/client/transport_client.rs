@@ -189,8 +189,6 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                         debug!(?closed, "client connection status");
 
                         if closed {
-                            info!(?server_addr, "disconnected from server");
-
                             break;
                         } else {
                             SessionState::Idle
