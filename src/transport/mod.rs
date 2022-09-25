@@ -221,36 +221,6 @@ where
     }
 }
 
-#[async_trait]
-pub trait Messenger {
-    type In: Message;
-    type Out: Message;
-
-    async fn recv_msg(&mut self) -> Result<Self::In, Error>;
-    async fn send_msg<'a>(&mut self, msg: Self::Out) -> Result<(), Error>;
-}
-
-#[async_trait]
-impl<T, IN, OUT> Messenger for Transport<T, IN, OUT>
-where
-    T: AsyncRead + AsyncWrite + Unpin + Send,
-    IN: Message + Debug + Send,
-    OUT: Message + Debug + Send + Sync,
-{
-    type In = IN;
-    type Out = OUT;
-
-    async fn recv_msg(&mut self) -> Result<Self::In, Error> {
-        let x = Transport::recv_msg(self).await?;
-        Ok(x)
-    }
-
-    async fn send_msg<'a>(&mut self, msg: Self::Out) -> Result<(), Error> {
-        Transport::send_msg(self, msg).await?;
-        Ok(())
-    }
-}
-
 /// Facilitates acquiring and upgrading [Transport].
 #[derive(Debug)]
 pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
@@ -291,22 +261,6 @@ impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT> {
             Ok(t)
         } else {
             bail!("expecting secure transport, but was not")
-        }
-    }
-}
-
-impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT>
-where
-    PS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
-    SS: AsyncRead + AsyncWrite + Debug + Send + Unpin,
-    IN: Message + Debug + Send,
-    OUT: Message + Debug + Send + Sync,
-{
-    /// Mutably borrow current transport.
-    pub fn any(&mut self) -> &mut (dyn Messenger<In = IN, Out = OUT> + Send) {
-        match self {
-            Transporter::Plain(x) => x,
-            Transporter::Secure(x) => x,
         }
     }
 }
