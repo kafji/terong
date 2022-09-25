@@ -3,32 +3,27 @@ mod transport_server;
 pub mod config;
 
 use crate::{
-    config::Config,
+    config::{read_certs, read_private_key, Config},
     logging::init_tracing,
     server::{config::ServerConfig, transport_server::TransportServer},
-    transport::{generate_tls_key_pair, protocol::Sha256},
 };
+use anyhow::Error;
 use cfg_if::cfg_if;
 use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
-/// Run the server application.
-pub async fn run() {
+async fn start_server_app(cfg: ServerConfig) -> Result<(), Error> {
     init_tracing();
 
-    let config @ ServerConfig { port, addr, .. } = Config::read_config()
-        .await
-        .expect("failed to read config")
-        .server();
+    info!(?cfg, "starting server app");
 
-    let (tls_cert, tls_key) = generate_tls_key_pair(addr).expect("failed to generate tls key pair");
-
-    info!("starting server app");
-
-    println!(
-        "Server TLS certificate hash is {}.",
-        Sha256::from_bytes(tls_cert.as_ref())
-    );
+    let ServerConfig {
+        port,
+        tls_cert_path,
+        tls_key_path,
+        client_tls_cert_path,
+        ..
+    } = cfg;
 
     let (event_tx, event_rx) = mpsc::channel(1);
 
@@ -36,9 +31,9 @@ pub async fn run() {
         cfg_if! {
             if #[cfg(target_os = "linux")] {
                 crate::input_source::start(
-                    config.linux.keyboard_device,
-                    config.linux.mouse_device,
-                    config.linux.touchpad_device,
+                    cfg.linux.keyboard_device,
+                    cfg.linux.mouse_device,
+                    cfg.linux.touchpad_device,
                     event_tx
                 )
             } else {
@@ -48,11 +43,18 @@ pub async fn run() {
     };
 
     let server = {
+        let tls_certs = read_certs(&tls_cert_path).await?;
+
+        let tls_key = read_private_key(&tls_key_path).await?;
+
+        let client_tls_certs = read_certs(&client_tls_cert_path).await?;
+
         let args = TransportServer {
             port,
             event_rx,
-            tls_cert,
+            tls_certs,
             tls_key,
+            client_tls_certs,
         };
         transport_server::start(args)
     };
@@ -60,4 +62,13 @@ pub async fn run() {
     try_join!(input_source, server).unwrap();
 
     info!("server app stopped");
+
+    Ok(())
+}
+
+/// Run the server application.
+pub async fn run() {
+    let cfg = Config::get().await.server();
+
+    start_server_app(cfg).await.unwrap();
 }

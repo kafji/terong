@@ -1,16 +1,18 @@
 [client]
-# This client IP address.
-# This field is used to generate TLS key at runtime.
-addr = "192.168.0.2"
+# Paths to client's TLS key pair.
+tls_cert_path = "./client_cert.pem"
+tls_key_path = "./client_key.pem"
 # Address of the server the client will connect to.
 server_addr = "192.168.0.1:3000"
+server_tls_cert_path = "./server_cert.pem"
 
 [server]
 # Where the server will listen for incoming connections.
 port = 3000
-# This server IP address.
-# This field is used to generate TLS key at runtime.
-addr = "192.168.0.1"
+# Paths to server's TLS key pair.
+tls_cert_path = "./server_cert.pem"
+tls_key_path = "./server_key.pem"
+client_tls_cert_path = "./client_cert.pem"
 
 [server.linux]
 # replace this fields with input device path listed in `evtest`

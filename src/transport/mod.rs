@@ -1,6 +1,6 @@
 pub mod protocol;
 
-use self::protocol::{ClientMessage, ServerMessage, Sha256};
+use self::protocol::{ClientMessage, ServerMessage};
 use anyhow::{bail, Context, Error};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, BytesMut};
@@ -16,7 +16,6 @@ use std::{
     convert::TryInto,
     fmt::{self, Debug},
     marker::PhantomData,
-    net::IpAddr,
     time::SystemTime,
 };
 use tokio::{
@@ -335,12 +334,12 @@ newtype! {
 /// Certifier for a single known certificate.
 #[derive(Clone, Debug)]
 pub struct SingleCertVerifier {
-    cert_hash: Sha256,
+    cert: Certificate,
 }
 
 impl SingleCertVerifier {
-    pub fn new(cert_hash: Sha256) -> Self {
-        Self { cert_hash }
+    pub fn new(cert: Certificate) -> Self {
+        Self { cert }
     }
 }
 
@@ -354,7 +353,7 @@ impl ServerCertVerifier for SingleCertVerifier {
         _ocsp_response: &[u8],
         _now: SystemTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        if self.cert_hash == Sha256::from_bytes(&end_entity.0) {
+        if &end_entity.0 == self.cert.as_ref() {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General("invalid server certificate".into()))
@@ -373,21 +372,10 @@ impl ClientCertVerifier for SingleCertVerifier {
         _intermediates: &[rustls::Certificate],
         _now: SystemTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        if self.cert_hash == Sha256::from_bytes(&end_entity.0) {
+        if &end_entity.0 == self.cert.as_ref() {
             Ok(ClientCertVerified::assertion())
         } else {
             Err(rustls::Error::General("invalid client certificate".into()))
         }
     }
-}
-
-pub fn generate_tls_key_pair(addr: IpAddr) -> Result<(Certificate, PrivateKey), Error> {
-    let mut params = rcgen::CertificateParams::default();
-    params
-        .subject_alt_names
-        .push(rcgen::SanType::IpAddress(addr));
-    let cert = rcgen::Certificate::from_params(params).unwrap();
-    let private_key = cert.serialize_private_key_der().into();
-    let cert = cert.serialize_der()?.into();
-    Ok((cert, private_key))
 }

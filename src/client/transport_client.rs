@@ -1,10 +1,7 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{
-            ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage, Sha256,
-            UpgradeTransportRequest, UpgradeTransportResponse,
-        },
+        protocol::{ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
@@ -24,16 +21,20 @@ use tokio::{
     time::sleep,
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::info;
+use tracing::{debug, info};
 
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
 #[derive(Debug)]
 pub struct TransportClient {
     pub server_addr: SocketAddr,
-    pub event_tx: mpsc::Sender<InputEvent>,
-    pub tls_cert: Certificate,
+
+    pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
+
+    pub server_tls_certs: Vec<Certificate>,
+
+    pub event_tx: mpsc::Sender<InputEvent>,
 }
 
 pub fn start(args: TransportClient) -> JoinHandle<()> {
@@ -41,8 +42,26 @@ pub fn start(args: TransportClient) -> JoinHandle<()> {
 }
 
 async fn run_transport_client(args: TransportClient) {
+    let TransportClient {
+        server_addr,
+        event_tx,
+        tls_certs,
+        tls_key,
+        server_tls_certs,
+    } = args;
+
+    let tls_config = {
+        let tls = create_client_tls_config(
+            tls_certs,
+            tls_key,
+            server_tls_certs.into_iter().last().unwrap(),
+        )
+        .unwrap();
+        Arc::new(tls)
+    };
+
     loop {
-        if let Err(err) = connect(&args).await {
+        if let Err(err) = connect(&server_addr, tls_config.clone(), &event_tx).await {
             log_error!(err);
 
             sleep(Duration::from_secs(5)).await;
@@ -50,14 +69,11 @@ async fn run_transport_client(args: TransportClient) {
     }
 }
 
-async fn connect(env: &TransportClient) -> Result<(), Error> {
-    let TransportClient {
-        server_addr,
-        event_tx,
-        tls_cert,
-        tls_key,
-    } = env;
-
+async fn connect(
+    server_addr: &SocketAddr,
+    tls_config: Arc<ClientConfig>,
+    event_tx: &mpsc::Sender<InputEvent>,
+) -> Result<(), Error> {
     info!(?server_addr, "connecting to server");
 
     let stream = TcpStream::connect(server_addr)
@@ -70,26 +86,23 @@ async fn connect(env: &TransportClient) -> Result<(), Error> {
 
     let session = Session {
         server_addr,
+        tls_config,
         event_tx,
-        client_tls_cert: tls_cert,
-        client_tls_key: tls_key,
         transporter,
         state: Default::default(),
     };
 
     let r = run_session(session).await;
 
-    println!("Disconnected from server at {}.", server_addr.ip());
+    info!(?server_addr, "disconnected from server");
 
     r
 }
 
-#[derive(Debug)]
 struct Session<'a> {
     server_addr: &'a SocketAddr,
+    tls_config: Arc<ClientConfig>,
     event_tx: &'a mpsc::Sender<InputEvent>,
-    client_tls_cert: &'a Certificate,
-    client_tls_key: &'a PrivateKey,
     transporter: ClientTransporter,
     state: SessionState,
 }
@@ -104,9 +117,8 @@ pub enum SessionState {
 async fn run_session(session: Session<'_>) -> Result<(), Error> {
     let Session {
         server_addr,
+        tls_config,
         event_tx,
-        client_tls_cert,
-        client_tls_key,
         mut transporter,
         mut state,
     } = session;
@@ -114,52 +126,42 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
     loop {
         state = match state {
             SessionState::Handshaking => {
-                // get transport
+                let client_version = env!("CARGO_PKG_VERSION").into();
+
+                debug!(?server_addr, ?client_version, "handshaking");
+
                 let transport = transporter.plain()?;
 
                 // send hello message
-                let client_version = env!("CARGO_PKG_VERSION").into();
                 let msg = HelloMessage { client_version };
                 transport.send_msg(msg.into()).await?;
 
                 // wait for hello reply
                 let msg = transport.recv_msg().await?;
-                let server_tls_cert = match msg {
-                    ServerMessage::HelloReply(reply) => match reply {
-                        HelloReply::Ok(UpgradeTransportRequest {
-                            server_tls_cert_hash,
-                        }) => server_tls_cert_hash,
-                        HelloReply::Err(err) => {
+                match msg {
+                    ServerMessage::HelloReply(reply) => {
+                        if let HelloReply::Err(err) = reply {
                             bail!("handshake fail, {:?}", err)
                         }
-                    },
+                    }
                     _ => bail!("received unexpected message, {:?}", msg),
-                };
+                }
 
-                // send client tls certificate
-                let msg = UpgradeTransportResponse {
-                    client_tls_cert_hash: Sha256::from_bytes(client_tls_cert.as_ref()),
-                };
-                transport.send_msg(msg.into()).await?;
+                debug!(?server_addr, "upgrading to secure transport");
 
                 // upgrade to tls
-                transporter = transporter
-                    .upgrade(move |stream| async move {
-                        upgrade_client_stream(
-                            stream,
-                            client_tls_cert.to_owned(),
-                            client_tls_key.to_owned(),
-                            server_tls_cert,
-                            server_addr.ip(),
-                        )
-                        .await
-                    })
-                    .await?;
-                info!(?server_addr, "connection upgraded");
+                transporter = {
+                    let tls_config = tls_config.clone();
+                    transporter
+                        .upgrade(move |stream| async move {
+                            upgrade_client_stream(stream, tls_config, server_addr.ip()).await
+                        })
+                        .await?
+                };
 
-                info!("session established");
+                debug!(?server_addr, "connection upgraded");
 
-                println!("Connected to server at {}.", server_addr.ip());
+                info!(?server_addr, "session established");
 
                 SessionState::Established
             }
@@ -188,27 +190,13 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
 
 async fn upgrade_client_stream<S>(
     stream: S,
-    client_tls_cert: Certificate,
-    client_tls_key: PrivateKey,
-    server_tls_cert_hash: Sha256,
+    tls_config: Arc<ClientConfig>,
     server_addr: IpAddr,
 ) -> Result<TlsStream<S>, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let tls: TlsConnector = {
-        let server_cert_verifier = Arc::new(SingleCertVerifier::new(server_tls_cert_hash));
-
-        let client_cert = rustls::Certificate(client_tls_cert.into());
-        let client_private_key = rustls::PrivateKey(client_tls_key.into());
-
-        let cfg = ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(server_cert_verifier)
-            .with_single_cert(vec![client_cert], client_private_key)
-            .context("failed to create client config tls")?;
-        Arc::new(cfg).into()
-    };
+    let tls: TlsConnector = tls_config.into();
 
     let stream = tls
         .connect(ServerName::IpAddress(server_addr), stream)
@@ -216,4 +204,28 @@ where
         .context("tls connect failed")?;
 
     Ok(stream.into())
+}
+
+fn create_client_tls_config(
+    client_certs: Vec<Certificate>,
+    client_key: PrivateKey,
+    server_cert: Certificate,
+) -> Result<ClientConfig, Error> {
+    let cert_verifier = Arc::new(SingleCertVerifier::new(server_cert));
+
+    let mut cfg = ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(cert_verifier)
+        .with_single_cert(
+            client_certs
+                .into_iter()
+                .map(|x| rustls::Certificate(x.into()))
+                .collect(),
+            rustls::PrivateKey(client_key.into()),
+        )
+        .context("failed to create client config tls")?;
+
+    cfg.enable_sni = false;
+
+    Ok(cfg)
 }

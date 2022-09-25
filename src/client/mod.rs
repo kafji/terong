@@ -5,30 +5,24 @@ pub mod config;
 
 use crate::{
     client::{config::ClientConfig, transport_client::TransportClient},
-    config::Config,
+    config::{read_certs, read_private_key, Config},
     logging::init_tracing,
-    transport::{generate_tls_key_pair, protocol::Sha256},
 };
+use anyhow::Error;
 use tokio::sync::mpsc;
 use tracing::info;
 
-/// Run the client application.
-pub async fn run() {
+async fn start_client_app(cfg: ClientConfig) -> Result<(), Error> {
     init_tracing();
 
-    let ClientConfig { addr, server_addr } = Config::read_config()
-        .await
-        .expect("failed to read config")
-        .client();
+    info!(?cfg, "starting client app");
 
-    let (tls_cert, tls_key) = generate_tls_key_pair(addr).expect("failed to generate tls key pair");
-
-    info!("starting client app");
-
-    println!(
-        "Client TLS certificate hash is {}.",
-        Sha256::from_bytes(tls_cert.as_ref())
-    );
+    let ClientConfig {
+        tls_cert_path,
+        tls_key_path,
+        server_addr,
+        server_tls_cert_path,
+    } = cfg;
 
     // channel for input events from the transport client to the input sink
     let (event_tx, event_rx) = mpsc::channel(1);
@@ -36,13 +30,20 @@ pub async fn run() {
     // transport client establishes connection with the server and propagate input
     // events through the channel
     let transport_client = {
-        let env = TransportClient {
+        let tls_certs = read_certs(&tls_cert_path).await?;
+
+        let tls_key = read_private_key(&tls_key_path).await?;
+
+        let server_tls_certs = read_certs(&server_tls_cert_path).await?;
+
+        let args = TransportClient {
             server_addr,
-            event_tx,
-            tls_cert,
+            tls_certs,
             tls_key,
+            server_tls_certs,
+            event_tx,
         };
-        transport_client::start(env)
+        transport_client::start(args)
     };
 
     // input sink receives input events and emulate the input events in its host
@@ -52,7 +53,16 @@ pub async fn run() {
     // The input event channel will be closed when one of the workers, transport
     // client or the input sink, is stopped,  In response to the channel closed
     // the other worker will stop as well and this join will resume.
-    tokio::try_join!(transport_client, input_sink).unwrap();
+    tokio::try_join!(transport_client, input_sink)?;
 
     info!("client app stopped");
+
+    Ok(())
+}
+
+/// Run the client application.
+pub async fn run() {
+    let cfg = Config::get().await.client();
+
+    start_client_app(cfg).await.unwrap();
 }

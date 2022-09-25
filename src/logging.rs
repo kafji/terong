@@ -1,4 +1,4 @@
-use cfg_if::cfg_if;
+use tracing::metadata::LevelFilter;
 use tracing_subscriber::EnvFilter;
 
 pub fn init_tracing() {
@@ -9,16 +9,9 @@ pub fn init_tracing() {
 }
 
 fn env_filter() -> EnvFilter {
-    let builder = EnvFilter::builder();
-
-    cfg_if! {
-        if #[cfg(debug_assertions)] {
-            use tracing::metadata::LevelFilter;
-            let builder = builder.with_default_directive(LevelFilter::INFO.into());
-        }
-    }
-
-    builder.from_env_lossy()
+    EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env_lossy()
 }
 
 #[macro_export]

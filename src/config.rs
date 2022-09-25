@@ -1,10 +1,21 @@
 //! Applications configuration.
 
-use crate::{client::config::ClientConfig, server::config::ServerConfig};
-use anyhow::{anyhow, Error};
+use crate::{
+    client::config::ClientConfig,
+    server::config::ServerConfig,
+    transport::{Certificate, PrivateKey},
+};
+use anyhow::Error;
 use serde::Deserialize;
-use std::{env, path::PathBuf};
-use tokio::{fs::File, io::AsyncReadExt};
+use std::{
+    env,
+    io::Cursor,
+    path::{Path, PathBuf},
+};
+use tokio::{
+    fs::{self, File},
+    io::AsyncReadExt,
+};
 use tracing::debug;
 
 /// Data structure representing config file scheme.
@@ -15,7 +26,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub async fn read_config() -> Result<Self, Error> {
+    pub async fn get() -> Self {
         let mut paths = config_paths();
 
         let file = loop {
@@ -27,13 +38,21 @@ impl Config {
             match File::open(&path).await {
                 Ok(x) => break Some(x),
                 Err(err) => {
-                    debug!(?path, ?err, "failed to open config file")
+                    debug!(?path, ?err, "failed to open config file");
                 }
             }
         };
 
-        let mut file = file.ok_or_else(|| anyhow!("failed to find configuration file"))?;
+        let mut file = file.expect("failed to find config file");
 
+        let config = Self::from_file(&mut file)
+            .await
+            .expect("failed to read config from file");
+
+        config
+    }
+
+    async fn from_file(file: &mut File) -> Result<Self, Error> {
         let mut buf = String::new();
         file.read_to_string(&mut buf).await?;
 
@@ -70,4 +89,41 @@ fn config_paths() -> impl Iterator<Item = PathBuf> {
     ]
     .into_iter()
     .flatten()
+}
+
+pub async fn read_certs(path: &Path) -> Result<Vec<Certificate>, Error> {
+    let buf = fs::read(path).await?;
+    let mut buf = Cursor::new(buf);
+
+    let certs = rustls_pemfile::certs(&mut buf)?;
+
+    assert!(!certs.is_empty());
+
+    let certs = certs.into_iter().map(Into::into).collect();
+
+    Ok(certs)
+}
+
+pub async fn read_private_key(path: &Path) -> Result<PrivateKey, Error> {
+    let buf = fs::read(path).await?;
+    let mut buf = Cursor::new(buf);
+
+    let keys = rustls_pemfile::pkcs8_private_keys(&mut buf)?;
+
+    let key = keys.into_iter().next().unwrap();
+
+    let key = key.into();
+
+    Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_parse_example() {
+        let mut file = File::open("./example.duangler.toml").await.unwrap();
+        Config::from_file(&mut file).await.unwrap();
+    }
 }
