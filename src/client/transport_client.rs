@@ -77,9 +77,15 @@ async fn connect(
 ) -> Result<(), Error> {
     info!(?server_addr, "connecting to server");
 
-    let stream = TcpStream::connect(server_addr)
-        .await
-        .context("failed to connect to the server")?;
+    let stream = select! { biased;
+        Ok(stream) = TcpStream::connect(server_addr) => {
+            stream
+        }
+
+        _ = tokio::time::sleep(Duration::from_secs(30)) => {
+            bail!("failed to connect to the server after 30 secs")
+        }
+    };
 
     info!(?server_addr, "connected to server");
 
