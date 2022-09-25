@@ -129,7 +129,7 @@ async fn handle_incoming_connection(
 struct SessionHandler {
     event_tx: mpsc::Sender<InputEvent>,
     task: JoinHandle<()>,
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<SessionState>>,
 }
 
 impl SessionHandler {
@@ -147,9 +147,9 @@ impl SessionHandler {
     fn is_connected(&self) -> bool {
         let state = self.state.lock().unwrap();
         match &*state {
-            State::Handshaking => false,
-            State::Idle => true,
-            State::RelayingEvent { .. } => true,
+            SessionState::Handshaking => false,
+            SessionState::Idle => true,
+            SessionState::RelayingEvent { .. } => true,
         }
     }
 }
@@ -163,11 +163,11 @@ struct Session {
 
     event_rx: mpsc::Receiver<InputEvent>,
 
-    state: Arc<Mutex<State>>,
+    state: Arc<Mutex<SessionState>>,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
-enum State {
+enum SessionState {
     #[default]
     Handshaking,
     Idle,
@@ -184,7 +184,7 @@ fn spawn_session(
 ) -> SessionHandler {
     let (event_tx, event_rx) = mpsc::channel(1);
 
-    let state: Arc<Mutex<State>> = Default::default();
+    let state: Arc<Mutex<SessionState>> = Default::default();
 
     let session = Session {
         tls_config,
@@ -226,7 +226,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
         };
 
         let new_state = match state {
-            State::Handshaking => {
+            SessionState::Handshaking => {
                 let server_version = env!("CARGO_PKG_VERSION").to_owned();
 
                 debug!(?peer_addr, ?server_version, "handshaking");
@@ -263,16 +263,16 @@ async fn run_session(session: Session) -> Result<(), Error> {
 
                 info!(?peer_addr, "session established");
 
-                State::Idle
+                SessionState::Idle
             }
 
-            State::Idle => {
+            SessionState::Idle => {
                 let transport = transporter.secure()?;
 
-                select! {
+                select! { biased;
                     event = event_rx.recv() => {
                         match event {
-                            Some(event) => State::RelayingEvent { event },
+                            Some(event) => SessionState::RelayingEvent { event },
                             None => break,
                         }
                     }
@@ -287,13 +287,13 @@ async fn run_session(session: Session) -> Result<(), Error> {
 
                             break;
                         } else {
-                            State::Idle
+                            SessionState::Idle
                         }
                     }
                 }
             }
 
-            State::RelayingEvent { event } => {
+            SessionState::RelayingEvent { event } => {
                 let transport = transporter.secure()?;
 
                 transport
@@ -301,7 +301,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                     .await
                     .context("failed to send message")?;
 
-                State::Idle
+                SessionState::Idle
             }
         };
 

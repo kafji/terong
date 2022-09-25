@@ -56,7 +56,7 @@ async fn send_msg(
 
 /// Sends 0 bytes message.
 ///
-/// Client should ignore this message.
+/// Recipient should ignore this message.
 async fn send_poke(sink: &mut (impl AsyncWrite + Unpin)) -> Result<(), Error> {
     sink.write_u16(0)
         .await
@@ -107,7 +107,7 @@ where
             // get message length
             let length = self.buf.get_u16();
 
-            // skip empty message
+            // ignore 0 bytes message
             if length == 0 {
                 continue;
             }

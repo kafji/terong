@@ -16,6 +16,7 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
+    select,
     sync::mpsc,
     task::{self, JoinHandle},
     time::sleep,
@@ -111,7 +112,10 @@ struct Session<'a> {
 pub enum SessionState {
     #[default]
     Handshaking,
-    Established,
+    Idle,
+    EventRelayed {
+        event: InputEvent,
+    },
 }
 
 async fn run_session(session: Session<'_>) -> Result<(), Error> {
@@ -163,29 +167,48 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
 
                 info!(?server_addr, "session established");
 
-                SessionState::Established
+                SessionState::Idle
             }
 
-            SessionState::Established => {
-                let messenger = transporter.any();
+            SessionState::Idle => {
+                let transport = transporter.secure()?;
 
-                let msg = messenger
-                    .recv_msg()
-                    .await
-                    .context("failed to receive message")?;
+                select! { biased;
+                    Ok(msg) = transport.recv_msg() => {
+                        let event = match msg {
+                            ServerMessage::Event(event) => event,
+                            _ => bail!("received unexpected message, {:?}", msg),
+                        };
 
-                let event = match msg {
-                    ServerMessage::Event(event) => event,
-                    _ => bail!("received unexpected message, {:?}", msg),
-                };
+                        SessionState::EventRelayed { event }
+                    }
 
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        let closed = transport.is_closed().await;
+
+                        debug!(?closed, "client connection status");
+
+                        if closed {
+                            info!(?server_addr, "disconnected from server");
+
+                            break;
+                        } else {
+                            SessionState::Idle
+                        }
+                    }
+                }
+            }
+
+            SessionState::EventRelayed { event } => {
                 // propagate event to input sink
                 event_tx.send(event).await?;
 
-                SessionState::Established
+                SessionState::Idle
             }
         };
     }
+
+    Ok(())
 }
 
 async fn upgrade_client_stream<S>(
