@@ -17,6 +17,8 @@ fn env_filter() -> EnvFilter {
 #[macro_export]
 macro_rules! log_error {
     ($err:expr) => {{
+        #[allow(unused)]
+        use std::error::Error;
         let cause = $err.source();
         if let Some(cause) = cause {
             tracing::error!(?cause, "{}", $err);

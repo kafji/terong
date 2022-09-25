@@ -6,9 +6,10 @@ use crate::{
     },
 };
 use anyhow::{bail, Context, Error};
+use macross::impl_from;
 use rustls::{ClientConfig, ServerName};
 use std::{
-    env,
+    env, fmt,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -65,7 +66,42 @@ async fn run_transport_client(args: TransportClient) {
         if let Err(err) = connect(&server_addr, tls_config.clone(), &event_tx).await {
             log_error!(err);
 
-            sleep(Duration::from_secs(5)).await;
+            match err {
+                ConnectError::Timeout { .. } => {
+                    break;
+                }
+                ConnectError::Other(_) => {
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ConnectError {
+    Timeout { msg: String },
+    Other(Error),
+}
+
+impl_from!(ConnectError, {
+    Self::Other => Error,
+});
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConnectError::Timeout { msg } => f.write_str(msg),
+            ConnectError::Other(err) => f.write_str(&err.to_string()),
+        }
+    }
+}
+
+impl std::error::Error for ConnectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConnectError::Other(err) => Some(err.as_ref()),
+            _ => None,
         }
     }
 }
@@ -74,7 +110,7 @@ async fn connect(
     server_addr: &SocketAddr,
     tls_config: Arc<ClientConfig>,
     event_tx: &mpsc::Sender<InputEvent>,
-) -> Result<(), Error> {
+) -> Result<(), ConnectError> {
     info!(?server_addr, "connecting to server");
 
     let stream = select! { biased;
@@ -83,7 +119,7 @@ async fn connect(
         }
 
         _ = tokio::time::sleep(Duration::from_secs(30)) => {
-            bail!("failed to connect to the server after 30 secs")
+            return Err(ConnectError::Timeout{msg:"failed to connect to the server after 30 secs".to_owned()});
         }
     };
 
@@ -99,11 +135,13 @@ async fn connect(
         state: Default::default(),
     };
 
-    let r = run_session(session).await;
+    let result = run_session(session).await;
 
     info!(?server_addr, "disconnected from server");
 
-    r
+    result?;
+
+    Ok(())
 }
 
 struct Session<'a> {
