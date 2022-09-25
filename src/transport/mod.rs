@@ -2,7 +2,6 @@ pub mod protocol;
 
 use self::protocol::{ClientMessage, ServerMessage};
 use anyhow::{bail, Context, Error};
-use async_trait::async_trait;
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
 use macross::newtype;
