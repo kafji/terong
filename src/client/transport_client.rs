@@ -118,8 +118,8 @@ async fn connect(
             stream
         }
 
-        _ = tokio::time::sleep(Duration::from_secs(30)) => {
-            return Err(ConnectError::Timeout{msg:"failed to connect to the server after 30 secs".to_owned()});
+        _ = tokio::time::sleep(Duration::from_secs(120)) => {
+            return Err(ConnectError::Timeout{msg:"failed to connect to the server after 120 secs".to_owned()});
         }
     };
 
