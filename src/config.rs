@@ -82,7 +82,7 @@ fn config_paths() -> impl Iterator<Item = PathBuf> {
             }
             #[cfg(target_os = "windows")]
             {
-                env::var("LocalAppData").ok().map(PathBuf::from)
+                env::var("LOCALAPPDATA").ok().map(PathBuf::from)
             }
         }
         .map(|x| x.join("net.kafji.duangler").join("duangler.toml")),
