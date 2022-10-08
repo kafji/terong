@@ -310,8 +310,6 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
 }
 
 /// Send input event to the message queue.
-///
-/// Retruns `true` if event should be consumed, `false` if event should be forwarded to the next hook.
 fn post_input_event(event: LocalInputEvent, time: Duration) {
     let event = {
         let x = Box::new((event, time));
