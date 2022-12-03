@@ -1,5 +1,9 @@
 # Todo
 
+- server side connection check
+
+- client side connection check
+
 - write test for recent key presses iterator
 
 - linux: map mouse linux input event to local input event
