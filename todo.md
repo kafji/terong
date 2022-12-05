@@ -1,8 +1,8 @@
 # Todo
 
-- server side connection check
-
 - client side connection check
+
+- server side connection check
 
 - write test for recent key presses iterator
 
