@@ -289,7 +289,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
         panic!("failed to convert windows virtual key code to app key code, virtual key code was: `{}`", hook_event.vkCode)
     });
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN | WM_SYSKEYDOWN => { LocalInputEvent::KeyDown { key } }.into(),
+        WM_KEYDOWN | WM_SYSKEYDOWN => LocalInputEvent::KeyDown { key }.into(),
 
         WM_KEYUP | WM_SYSKEYUP => LocalInputEvent::KeyUp { key }.into(),
 
