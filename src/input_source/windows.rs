@@ -150,7 +150,7 @@ fn get_screen_center() -> (i16 /* x */, i16 /* y */) {
         SystemParametersInfoW(
             SPI_GETWORKAREA,
             0,
-            ptr_rect,
+            Some(ptr_rect),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
         )
     };

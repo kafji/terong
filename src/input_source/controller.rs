@@ -279,8 +279,3 @@ impl<'a, T> Iterator for RecentKeyPresses<'a, T> {
         Some((key_up.key, key_up.order_key))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}
