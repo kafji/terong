@@ -23,20 +23,6 @@ use windows::Win32::{
     },
 };
 
-/// RAII for unhooking hook.
-///
-/// Calls [UnhookWindowsHookEx] on drop.
-struct Unhooker(HHOOK);
-
-impl Drop for Unhooker {
-    fn drop(&mut self) {
-        let ok: bool = unsafe { UnhookWindowsHookEx(self.0) }.into();
-        if !ok {
-            error!("failed to unhook {:?}", self.0);
-        }
-    }
-}
-
 pub fn start(event_tx: mpsc::Sender<InputEvent>) -> task::JoinHandle<()> {
     task::spawn_blocking(|| run_input_source(event_tx))
 }
@@ -70,18 +56,22 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     );
 
     let mut msg = MSG::default();
-    let mut prev_event = None;
     let mut old_cursor_pos = None;
+    let mut event_mapper = LocalEventMapper::new();
 
     loop {
         // set cursor position to its locked position if we're grabbing input
-        if get_consume_input() {
+        if consume_input() {
+            // capture cursor position, so we can restore it later
             if old_cursor_pos.is_none() {
-                let mut pos = POINT::default();
-                unsafe { GetCursorPos(&mut pos) };
+                let cursor_pos = {
+                    let mut p = POINT::default();
+                    unsafe { GetCursorPos(&mut p) };
+                    p
+                };
                 old_cursor_pos = Some(MousePosition {
-                    x: pos.x as _,
-                    y: pos.y as _,
+                    x: cursor_pos.x as _,
+                    y: cursor_pos.y as _,
                 });
             }
 
@@ -104,34 +94,27 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             _ => {
                 match msg.message {
                     n if n == MessageCode::InputEvent as _ => {
-                        // get pointer to input event from lparam
-                        let ptr_event = msg.lParam.0 as *mut (LocalInputEvent, Duration);
-                        // acquire input event, the box will ensure it will be freed
-                        let (new_event, _) = *unsafe { Box::from_raw(ptr_event) };
-
-                        // maps repeated key down events into key repeat event
-                        let event = match (prev_event, &new_event) {
-                            (
-                                Some(LocalInputEvent::KeyDown { key: prev_key }),
-                                LocalInputEvent::KeyDown { key },
-                            ) if key == &prev_key => LocalInputEvent::KeyRepeat { key: *key },
-                            _ => new_event,
+                        let event = {
+                            // acquire input event
+                            let (new_event, _) = *unsafe {
+                                // get pointer to input event from lparam
+                                let ptr_event = msg.lParam.0 as *mut (LocalInputEvent, Duration);
+                                // the box will ensure it will be freed
+                                Box::from_raw(ptr_event)
+                            };
+                            event_mapper.map(new_event)
                         };
 
-                        prev_event = Some(new_event);
+                        // propagate input event to the controller
+                        let should_consume_input = controller.on_input_event(event).unwrap();
 
-                        // propagate input event to the sink
-                        let consume_input = controller.on_input_event(event).unwrap();
-
-                        if consume_input != get_consume_input() {
-                            if !consume_input {
-                                // restore mouse position
-                                if let Some(MousePosition { x, y }) = old_cursor_pos.take() {
-                                    unsafe { SetCursorPos(x as _, y as _) };
-                                }
+                        if should_consume_input != consume_input() {
+                            // consuming input is turned off, restore old cursor position
+                            if !should_consume_input {
+                                restore_mouse_position(old_cursor_pos.take());
                             }
 
-                            set_consume_input(consume_input);
+                            set_consume_input(should_consume_input);
                         }
                     }
                     _ => unsafe {
@@ -143,6 +126,42 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
     }
 }
 
+#[derive(Debug, Clone)]
+struct LocalEventMapper {
+    prev_event: Option<LocalInputEvent>,
+}
+
+impl LocalEventMapper {
+    fn new() -> Self {
+        Self { prev_event: None }
+    }
+
+    fn map(&mut self, event: LocalInputEvent) -> LocalInputEvent {
+        let o = self.map_key_repeat(event);
+        self.prev_event = Some(event);
+        o
+    }
+
+    // Maps repeated key down events into key repeat event.
+    fn map_key_repeat(&self, new_event: LocalInputEvent) -> LocalInputEvent {
+        let prev_event = &self.prev_event;
+        match (prev_event, new_event) {
+            (
+                Some(LocalInputEvent::KeyDown { key: prev_key }),
+                LocalInputEvent::KeyDown { key },
+            ) if key == *prev_key => LocalInputEvent::KeyRepeat { key },
+            _ => new_event,
+        }
+    }
+}
+
+fn restore_mouse_position(pos: Option<MousePosition>) {
+    if let Some(MousePosition { x, y }) = pos {
+        unsafe { SetCursorPos(x as _, y as _) };
+    }
+}
+
+/// Returns coordinate for the center of the screen.
 fn get_screen_center() -> (i16 /* x */, i16 /* y */) {
     let mut rect = RECT::default();
     let ptr_rect = &mut rect as *mut _ as *mut c_void;
@@ -166,10 +185,12 @@ thread_local! {
     static CURSOR_LOCKED_POS: MousePosition = get_screen_center().into();
 }
 
-fn get_consume_input() -> bool {
+/// Returns `true` if we should consume inputs.
+fn consume_input() -> bool {
     CONSUME_INPUT.with(|x| x.get())
 }
 
+/// Updates `consume_input()` value.
 fn set_consume_input(value: bool) {
     CONSUME_INPUT.with(|x| x.set(value));
 }
@@ -194,10 +215,9 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             let y = hook_event.pt.y as _;
             let pos = MousePosition { x, y };
 
-            if get_consume_input() {
-                let cpos = get_cursor_locked_pos();
-                let mvment = cpos.delta_to(&pos);
-                LocalInputEvent::MouseMove(mvment)
+            if consume_input() {
+                let movement = get_cursor_locked_pos().delta_to(&pos);
+                LocalInputEvent::MouseMove(movement)
             } else {
                 LocalInputEvent::MousePosition(pos)
             }
@@ -268,7 +288,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         post_input_event(event, time);
     }
 
-    if get_consume_input() {
+    if consume_input() {
         LRESULT(1)
     } else {
         unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
@@ -308,7 +328,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
         post_input_event(event, time);
     }
 
-    if get_consume_input() {
+    if consume_input() {
         LRESULT(1)
     } else {
         unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
@@ -343,5 +363,19 @@ fn get_mouse_button(data: MOUSEHOOKSTRUCTEX_MOUSE_DATA) -> Option<MouseButton> {
         n if n == XBUTTON1.0 as _ => MouseButton::Mouse4.into(),
         n if n == XBUTTON2.0 as _ => MouseButton::Mouse5.into(),
         _ => None,
+    }
+}
+
+/// RAII for unhooking hook.
+///
+/// Calls [UnhookWindowsHookEx] on drop.
+struct Unhooker(HHOOK);
+
+impl Drop for Unhooker {
+    fn drop(&mut self) {
+        let ok: bool = unsafe { UnhookWindowsHookEx(self.0) }.into();
+        if !ok {
+            error!("failed to unhook {:?}", self.0);
+        }
     }
 }
