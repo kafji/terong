@@ -13,7 +13,6 @@ use std::{
     fmt::Debug,
     net::{SocketAddr, SocketAddrV4},
     sync::{Arc, Mutex},
-    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -269,27 +268,10 @@ async fn run_session(session: Session) -> Result<(), Error> {
             }
 
             SessionState::Idle => {
-                let transport = transporter.secure()?;
-
-                select! { biased;
-                    event = event_rx.recv() => {
-                        match event {
-                            Some(event) => SessionState::RelayingEvent { event },
-                            None => break,
-                        }
-                    }
-
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        let closed = transport.is_closed().await;
-
-                        debug!(?closed, "client connection status");
-
-                        if closed {
-                            break;
-                        } else {
-                            SessionState::Idle
-                        }
-                    }
+                let event = event_rx.recv().await;
+                match event {
+                    Some(event) => SessionState::RelayingEvent { event },
+                    None => break,
                 }
             }
 
