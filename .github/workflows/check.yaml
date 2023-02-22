@@ -1,0 +1,33 @@
+# https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions
+
+name: Check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RUST_BACKTRACE: full
+      RUST_LOG: debug
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v3
+        with:
+          # https://doc.rust-lang.org/cargo/guide/cargo-home.html#caching-the-cargo-home-in-ci
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-${{ runner.os }}-${{ hashFiles('./Cargo.toml', './Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}
+
+      - name: Test
+        run: cargo test
