@@ -25,6 +25,9 @@ use tokio::{
 use tokio_rustls::{TlsConnector, TlsStream};
 use tracing::{debug, info};
 
+/// Time it takes before client giving up on connecting to the server.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
 #[derive(Debug)]
@@ -118,7 +121,7 @@ async fn connect(
             stream
         }
 
-        _ = tokio::time::sleep(Duration::from_secs(120)) => {
+        _ = tokio::time::sleep(CONNECT_TIMEOUT) => {
             return Err(ConnectError::Timeout{msg:"failed to connect to the server after 120 secs".to_owned()});
         }
     };
