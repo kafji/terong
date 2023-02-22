@@ -122,7 +122,8 @@ async fn connect(
         }
 
         _ = tokio::time::sleep(CONNECT_TIMEOUT) => {
-            return Err(ConnectError::Timeout{msg:"failed to connect to the server after 120 secs".to_owned()});
+            let msg = format!("failed to connect to the server after {} secs", CONNECT_TIMEOUT.as_secs());
+            return Err(ConnectError::Timeout{ msg });
         }
     };
 
