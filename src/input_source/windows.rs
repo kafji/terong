@@ -305,17 +305,12 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     let hook_event = unsafe { *ptr_hook_event };
 
     // map hook event to input event
-
-    let get_key = || {
-        KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _)).unwrap_or_else(|| {
-            panic!("failed to convert windows virtual key code to app key code, virtual key code was: `{}`", hook_event.vkCode)
-        })
-    };
-
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN | WM_SYSKEYDOWN => LocalInputEvent::KeyDown { key: get_key() }.into(),
+        WM_KEYDOWN | WM_SYSKEYDOWN => KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _))
+            .map(|key| LocalInputEvent::KeyDown { key }),
 
-        WM_KEYUP | WM_SYSKEYUP => LocalInputEvent::KeyUp { key: get_key() }.into(),
+        WM_KEYUP | WM_SYSKEYUP => KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _))
+            .map(|key| LocalInputEvent::KeyUp { key }),
 
         action => {
             warn!(?action, "unhandled keyboard event");

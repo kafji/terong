@@ -370,6 +370,7 @@ pub mod windows {
         ScrollLock = VK_SCROLL.0.into(),
         PauseBreak = VK_PAUSE.0.into(),
 
+        // `~` also known as tilde.
         Grave = VK_OEM_3.0.into(),
 
         D1 = 0x31.into(),
