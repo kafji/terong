@@ -47,6 +47,8 @@ async fn send_msg(
 
     sink.write_all(&buf).await?;
 
+    sink.flush().await?;
+
     Ok(())
 }
 
