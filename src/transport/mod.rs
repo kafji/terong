@@ -28,6 +28,8 @@ impl Message for ServerMessage {}
 
 impl Message for ClientMessage {}
 
+const HEADER_LEN: usize = (u16::BITS / 8) as _; // 16 bit = 2 byte
+
 /// Send protocol message.
 ///
 /// This function is not cancel safe.
@@ -38,12 +40,12 @@ async fn send_msg(
     debug!(?msg, "sending message");
 
     let msg_len: u16 = bincode::serialized_size(&msg)?.try_into()?;
-    let len = 2 + msg_len as usize;
+    let len = HEADER_LEN + msg_len as usize;
 
     let mut buf = vec![0; len];
-    buf[0..2].copy_from_slice(&msg_len.to_be_bytes());
+    buf[0..HEADER_LEN].copy_from_slice(&msg_len.to_be_bytes());
 
-    bincode::serialize_into(&mut buf[2..], &msg)?;
+    bincode::serialize_into(&mut buf[HEADER_LEN..], &msg)?;
 
     sink.write_all(&buf).await?;
 
@@ -100,7 +102,7 @@ where
         M: Message + Debug,
     {
         loop {
-            self.fill_buf(2).await?;
+            self.fill_buf(HEADER_LEN).await?;
 
             // get message length
             let length = self.buf.get_u16();
