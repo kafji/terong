@@ -8,7 +8,7 @@ use macross::newtype;
 use rustls::{
     client::{ServerCertVerified, ServerCertVerifier},
     server::{ClientCertVerified, ClientCertVerifier},
-    DistinguishedNames, ServerName,
+    DistinguishedName, ServerName,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -305,8 +305,8 @@ impl ServerCertVerifier for SingleCertVerifier {
 }
 
 impl ClientCertVerifier for SingleCertVerifier {
-    fn client_auth_root_subjects(&self) -> Option<DistinguishedNames> {
-        Some(vec![])
+    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
+        &[]
     }
 
     fn verify_client_cert(
