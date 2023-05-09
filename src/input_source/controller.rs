@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 pub struct InputController {
-    /// Buffer of local input events.
+    /// Buffer for local input events.
     event_buf: EventBuffer<Instant>,
     /// Input event sink.
     event_tx: mpsc::Sender<InputEvent>,
@@ -54,15 +54,14 @@ impl InputController {
             (first, second)
         };
 
+        // if the right ctrl key are pressed twice consecutively
         if let (Some((KeyCode::RightCtrl, _)), Some((KeyCode::RightCtrl, _))) =
             (most_recent, second_most)
         {
-            let new_value = !self.relay;
-
-            debug!(?new_value, "relay toggled");
-
+            let new_relay = !self.relay;
+            debug!(?new_relay, "relay toggled");
             self.event_buf.clear();
-            self.relay = new_value;
+            self.relay = new_relay;
             self.relay_toggled_at = Some(Instant::now());
         }
 
@@ -160,6 +159,7 @@ impl<'a, OrderKey> KeyPressEvent<'a, OrderKey> {
 
 struct RecentKeyPresses<'a, T> {
     events: Box<dyn Iterator<Item = KeyPressEvent<'a, T>> + 'a>,
+    /// Stores seen but unmatched events.
     queue: VecDeque<KeyPressEvent<'a, T>>,
 }
 
@@ -270,7 +270,7 @@ impl<'a, T> Iterator for RecentKeyPresses<'a, T> {
             None => return None,
         };
 
-        // if key down is not found then this iterator is exhausted
+        // if key up for the matching key down is not found then this iterator is exhausted
         let key_up = match self.find_key_up(key_down.key) {
             Some(x) => x,
             None => return None,
