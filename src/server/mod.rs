@@ -13,8 +13,6 @@ use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
 async fn start_server_app(cfg: ServerConfig) -> Result<(), Error> {
-    init_tracing();
-
     info!(?cfg, "starting server app");
 
     let ServerConfig {
@@ -68,6 +66,8 @@ async fn start_server_app(cfg: ServerConfig) -> Result<(), Error> {
 
 /// Run the server application.
 pub async fn run() {
+    init_tracing();
+
     let cfg = Config::get().await.server();
 
     start_server_app(cfg).await.unwrap();

@@ -16,7 +16,7 @@ use tokio::{
     fs::{self, File},
     io::AsyncReadExt,
 };
-use tracing::debug;
+use tracing::{debug, info};
 
 /// Data structure representing config file scheme.
 #[derive(Clone, Deserialize, Debug)]
@@ -36,7 +36,10 @@ impl Config {
             };
 
             match File::open(&path).await {
-                Ok(x) => break Some(x),
+                Ok(x) => {
+                    info!(?path, "found config file");
+                    break Some(x);
+                }
                 Err(err) => {
                     debug!(?path, ?err, "failed to open config file");
                 }
