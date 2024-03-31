@@ -278,7 +278,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                             ClientMessage::Ping(Ping { counter }) => {
                                 if counter == local_ping_counter {
                                     debug!("received ping, incrementing local counter, resetting ticker");
-                                    ping_ticker.reset_immediately();
+                                    ping_ticker.reset();
                                     local_ping_counter += 1;
                                     SessionState::Idle
                                 } else {
