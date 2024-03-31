@@ -78,7 +78,7 @@ async fn run_transport_client(args: TransportClient) {
         {
             log_error!(err);
 
-            if retry_count > 3 {
+            if retry_count > 5 {
                 info!("giving up after {} retries", retry_count);
                 break;
             }
