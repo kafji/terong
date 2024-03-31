@@ -1,7 +1,7 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{ClientMessage, InputEvent, Ping, ServerMessage},
+        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
@@ -22,7 +22,7 @@ use tokio::{
     time::{interval_at, Instant, MissedTickBehavior},
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
 
@@ -222,7 +222,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
     } = session;
 
     let mut ping_ticker = {
-        let interval = Duration::from_secs(10);
+        let interval = Duration::from_secs(30);
         let mut ticker = interval_at(Instant::now() + interval, interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ticker
@@ -277,9 +277,21 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         match msg {
                             ClientMessage::Ping(Ping { counter }) => {
                                 if counter == local_ping_counter {
-                                    debug!("received ping, incrementing local counter, resetting ticker");
-                                    ping_ticker.reset();
+                                    debug!("received ping, incrementing local counter");
                                     local_ping_counter += 1;
+
+                                    let msg = ServerMessage::Pong(Pong { counter: local_ping_counter });
+                                    match transport.send_msg(msg).await {
+                                        Ok(_) => (),
+                                        Err(err) => {
+                                            error!("failed to send pong, {:?}", err);
+                                            break;
+                                        },
+                                    }
+                                    debug!("pong sent successfully, incrementing local counter, resetting ticker");
+                                    local_ping_counter +=1;
+                                    ping_ticker.reset();
+
                                     SessionState::Idle
                                 } else {
                                     // received ping from client, but counter is mismatch

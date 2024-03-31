@@ -1,7 +1,7 @@
 pub mod protocol;
 
 use self::protocol::{ClientMessage, ServerMessage};
-use anyhow::{bail, Context, Error};
+use anyhow::{bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
 use macross::newtype;
@@ -18,7 +18,6 @@ use std::{
     time::SystemTime,
 };
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio_rustls::TlsStream;
 use tracing::debug;
 
 /// Protocol message marker trait.
@@ -51,16 +50,6 @@ async fn send_msg(
 
     sink.flush().await?;
 
-    Ok(())
-}
-
-/// Sends 0 bytes message.
-///
-/// Recipient should ignore this message.
-async fn send_poke(sink: &mut (impl AsyncWrite + Unpin)) -> Result<(), Error> {
-    sink.write_u16(0)
-        .await
-        .context("failed to send poke message")?;
     Ok(())
 }
 
