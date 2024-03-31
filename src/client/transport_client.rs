@@ -83,11 +83,7 @@ async fn run_transport_client(args: TransportClient) {
                 break;
             }
 
-            let delay = match err {
-                ConnectError::Timeout { .. } => Duration::from_secs(30),
-                ConnectError::Other(_) => Duration::from_secs(15),
-            };
-
+            let delay = Duration::from_secs(15);
             info!("reconnecting in {} secs", delay.as_secs());
             sleep(delay).await;
 
