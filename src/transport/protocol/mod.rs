@@ -1,9 +1,11 @@
+mod heartbeat;
 mod input_event;
 
 use macross::impl_from;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+pub use self::heartbeat::*;
 pub use self::input_event::*;
 
 /// Client to server message.
@@ -28,13 +30,3 @@ impl_from!(ServerMessage, {
      Self::Event => InputEvent,
      Self::Pong => Pong,
 });
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Ping {
-    pub counter: u16,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Pong {
-    pub counter: u16,
-}

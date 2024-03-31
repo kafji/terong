@@ -1,7 +1,7 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{ClientMessage, InputEvent, Ping, ServerMessage},
+        protocol::{ClientMessage, InputEvent, Ping, ServerMessage, PING_INTERVAL_DURATION},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
@@ -219,7 +219,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
         state: state_ref,
     } = session;
 
-    let mut ping_ticker = interval(Duration::from_secs(1));
+    let mut ping_ticker = interval(PING_INTERVAL_DURATION);
     let mut local_ping_counter = 1;
 
     loop {
