@@ -199,6 +199,8 @@ fn spawn_session(
             log_error!(err);
         };
 
+        info!("session terminated");
+
         info!(?peer_addr, "disconnected from client");
     });
 
@@ -259,12 +261,15 @@ async fn run_session(session: Session) -> Result<(), Error> {
                 select! { biased;
 
                     _ = ping_ticker.tick() => {
+                        debug!("ping ticker ticks");
+
                         if local_ping_counter % 2 == 1 {
                             // it has been a tick since last ping-pong or since the session was established
                             // yet server has not receive ping from client
                             info!("terminating session, heartbeat timed out");
                             break;
                         }
+
                         SessionState::Idle
                     }
 

@@ -212,8 +212,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                 select! { biased;
 
                     _ = ping_ticker.tick() => {
-                        // odd = client
-                        // even = server
+                        debug!("ping ticker ticks");
+
                         if local_ping_counter % 2 == 1 {
                             // odd, client send ping
                             let msg = Ping { counter: local_ping_counter }.into();
@@ -237,6 +237,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                     }
 
                     Ok(msg) = transport.recv_msg() => {
+                        debug!("received message, {:?}", msg);
+
                         let event = match msg {
                             ServerMessage::Event(event) => Some(event),
                             ServerMessage::Pong(Pong { counter })=> {
