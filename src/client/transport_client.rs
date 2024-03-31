@@ -1,11 +1,11 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage, PING_INTERVAL_DURATION},
+        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
-use anyhow::{bail, Context, Error};
+use anyhow::{Context, Error};
 use macross::impl_from;
 use rustls::{ClientConfig, ServerName};
 use std::{
@@ -20,7 +20,7 @@ use tokio::{
     select,
     sync::mpsc,
     task::{self, JoinHandle},
-    time::{interval, sleep},
+    time::{interval_at, sleep, Instant, MissedTickBehavior},
 };
 use tokio_rustls::{TlsConnector, TlsStream};
 use tracing::{debug, error, info, warn};
@@ -175,7 +175,10 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
         mut state,
     } = session;
 
-    let mut ping_ticker = interval(PING_INTERVAL_DURATION);
+    let interval = Duration::from_secs(5);
+    let mut ping_ticker = interval_at(Instant::now() + interval, interval);
+    ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
     let mut local_ping_counter = 1;
 
     loop {
@@ -214,6 +217,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                             match transport.send_msg(msg).await {
                                 Ok(_) => {
                                     local_ping_counter += 1;
+                                    debug!("ping sent successfully, incrementing local counter");
                                     SessionState::Idle
                                 },
                                 Err(err) => {
@@ -234,9 +238,11 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                             ServerMessage::Pong(Pong { counter })=> {
                                 if counter == local_ping_counter {
                                     local_ping_counter += 1;
+                                    debug!("received pong, incrementing local counter");
                                     None
                                 } else {
                                     // received pong from server, but counter is mismatch
+                                    info!("terminating session, ping counter mismatch");
                                     break;
                                 }
                             },

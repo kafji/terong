@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, time::Duration};
+use std::fmt::Debug;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Ping {
@@ -10,5 +10,3 @@ pub struct Ping {
 pub struct Pong {
     pub counter: u16,
 }
-
-pub const PING_INTERVAL_DURATION: Duration = Duration::from_secs(1);

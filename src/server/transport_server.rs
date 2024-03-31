@@ -1,7 +1,7 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{ClientMessage, InputEvent, Ping, ServerMessage, PING_INTERVAL_DURATION},
+        protocol::{ClientMessage, InputEvent, Ping, ServerMessage},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
@@ -19,7 +19,7 @@ use tokio::{
     select,
     sync::mpsc::{self, error::SendError},
     task::{self, JoinError, JoinHandle},
-    time::interval,
+    time::{interval_at, Instant, MissedTickBehavior},
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
 use tracing::{debug, info};
@@ -219,7 +219,10 @@ async fn run_session(session: Session) -> Result<(), Error> {
         state: state_ref,
     } = session;
 
-    let mut ping_ticker = interval(PING_INTERVAL_DURATION);
+    let interval = Duration::from_secs(10);
+    let mut ping_ticker = interval_at(Instant::now() + interval, interval);
+    ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
     let mut local_ping_counter = 1;
 
     loop {
@@ -257,6 +260,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         if local_ping_counter % 2 == 1 {
                             // it has been a tick since last ping-pong or since the session was established
                             // yet server has not receive ping from client
+                            info!("terminating session, heartbeat timed out");
                             break;
                         }
                         SessionState::Idle
@@ -266,10 +270,12 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         match msg {
                             ClientMessage::Ping(Ping { counter }) => {
                                 if counter == local_ping_counter {
+                                    debug!("received ping, incrementing local counter");
                                     local_ping_counter += 1;
                                     SessionState::Idle
                                 } else {
                                     // received ping from client, but counter is mismatch
+                                    info!("terminating session, ping counter mismatch");
                                     break;
                                 }
                             },
