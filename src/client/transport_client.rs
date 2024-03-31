@@ -26,7 +26,7 @@ use tokio_rustls::{TlsConnector, TlsStream};
 use tracing::{debug, error, info};
 
 /// Time it takes before client giving up on connecting to the server.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
 
