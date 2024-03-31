@@ -1,9 +1,7 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{
-            ClientMessage, HelloMessage, HelloReply, HelloReplyError, InputEvent, ServerMessage,
-        },
+        protocol::{ClientMessage, InputEvent, Ping, ServerMessage},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
@@ -13,6 +11,7 @@ use std::{
     fmt::Debug,
     net::{SocketAddr, SocketAddrV4},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -20,9 +19,10 @@ use tokio::{
     select,
     sync::mpsc::{self, error::SendError},
     task::{self, JoinError, JoinHandle},
+    time::interval,
 };
 use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
 
@@ -219,6 +219,9 @@ async fn run_session(session: Session) -> Result<(), Error> {
         state: state_ref,
     } = session;
 
+    let mut ping_ticker = interval(Duration::from_secs(1));
+    let mut local_ping_counter = 1;
+
     loop {
         // copy state from the mutex
         let state = {
@@ -228,28 +231,6 @@ async fn run_session(session: Session) -> Result<(), Error> {
 
         let new_state = match state {
             SessionState::Handshaking => {
-                let server_version = env!("CARGO_PKG_VERSION").to_owned();
-
-                debug!(?peer_addr, ?server_version, "handshaking");
-
-                let transport = transporter.plain()?;
-
-                // wait for hello message
-                let msg = transport.recv_msg().await?;
-                let ClientMessage::Hello(HelloMessage { client_version }) = msg;
-
-                // check version
-                if client_version != server_version {
-                    error!(?server_version, ?client_version, "version mismatch");
-
-                    let msg: HelloReply = HelloReplyError::VersionMismatch.into();
-                    transport.send_msg(msg.into()).await?;
-
-                    break;
-                }
-
-                transport.send_msg(HelloReply::Ok.into()).await?;
-
                 debug!(?peer_addr, "upgrading to secure transport");
 
                 // upgrade to tls
@@ -268,10 +249,39 @@ async fn run_session(session: Session) -> Result<(), Error> {
             }
 
             SessionState::Idle => {
-                let event = event_rx.recv().await;
-                match event {
-                    Some(event) => SessionState::RelayingEvent { event },
-                    None => break,
+                let transport = transporter.secure()?;
+
+                select! { biased;
+
+                    _ = ping_ticker.tick() => {
+                        if local_ping_counter % 2 == 1 {
+                            // it has been a tick since last ping-pong or since the session was established
+                            // yet server has not receive ping from client
+                            break;
+                        }
+                        SessionState::Idle
+                    }
+
+                    Ok(msg) = transport.recv_msg() => {
+                        match msg {
+                            ClientMessage::Ping(Ping { counter }) => {
+                                if counter == local_ping_counter {
+                                    local_ping_counter += 1;
+                                    SessionState::Idle
+                                } else {
+                                    // received ping from client, but counter is mismatch
+                                    break;
+                                }
+                            },
+                        }
+                    }
+
+                    event = event_rx.recv() => {
+                        match event {
+                            Some(event) => SessionState::RelayingEvent { event },
+                            None => break,
+                        }
+                    }
                 }
             }
 

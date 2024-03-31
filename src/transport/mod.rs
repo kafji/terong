@@ -205,6 +205,7 @@ impl<S, IN, OUT> Transport<TlsStream<S>, IN, OUT>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    #[deprecated]
     pub async fn is_closed(&mut self) -> bool {
         send_poke(&mut self.stream).await.is_err()
     }

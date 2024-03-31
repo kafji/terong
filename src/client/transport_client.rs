@@ -1,7 +1,7 @@
 use crate::{
     log_error,
     transport::{
-        protocol::{ClientMessage, HelloMessage, HelloReply, InputEvent, ServerMessage},
+        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
     },
 };
@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Error};
 use macross::impl_from;
 use rustls::{ClientConfig, ServerName};
 use std::{
-    env, fmt,
+    fmt,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -20,10 +20,10 @@ use tokio::{
     select,
     sync::mpsc,
     task::{self, JoinHandle},
-    time::sleep,
+    time::{interval, sleep},
 };
 use tokio_rustls::{TlsConnector, TlsStream};
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
 
 /// Time it takes before client giving up on connecting to the server.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -175,30 +175,12 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
         mut state,
     } = session;
 
+    let mut ping_ticker = interval(Duration::from_secs(1));
+    let mut local_ping_counter = 1;
+
     loop {
         state = match state {
             SessionState::Handshaking => {
-                let client_version = env!("CARGO_PKG_VERSION").into();
-
-                debug!(?server_addr, ?client_version, "handshaking");
-
-                let transport = transporter.plain()?;
-
-                // send hello message
-                let msg = HelloMessage { client_version };
-                transport.send_msg(msg.into()).await?;
-
-                // wait for hello reply
-                let msg = transport.recv_msg().await?;
-                match msg {
-                    ServerMessage::HelloReply(reply) => {
-                        if let HelloReply::Err(err) = reply {
-                            bail!("handshake fail, {:?}", err)
-                        }
-                    }
-                    _ => bail!("received unexpected message, {:?}", msg),
-                }
-
                 debug!(?server_addr, "upgrading to secure transport");
 
                 // upgrade to tls
@@ -222,24 +204,51 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                 let transport = transporter.secure()?;
 
                 select! { biased;
-                    Ok(msg) = transport.recv_msg() => {
-                        let event = match msg {
-                            ServerMessage::Event(event) => event,
-                            _ => bail!("received unexpected message, {:?}", msg),
-                        };
 
-                        SessionState::EventRelayed { event }
+                    _ = ping_ticker.tick() => {
+                        // odd = client
+                        // even = server
+                        if local_ping_counter % 2 == 1 {
+                            // odd, client send ping
+                            let msg = Ping { counter: local_ping_counter }.into();
+                            match transport.send_msg(msg).await {
+                                Ok(_) => {
+                                    local_ping_counter += 1;
+                                    SessionState::Idle
+                                },
+                                Err(err) => {
+                                    error!("failed to send ping, {:?}",err);
+                                    break;
+                                },
+                            }
+                        } else {
+                            // even, client has sent ping a tick before
+                            // but client has not receive pong from server
+                            break;
+                        }
                     }
 
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
-                        let closed = transport.is_closed().await;
+                    Ok(msg) = transport.recv_msg() => {
+                        let event = match msg {
+                            ServerMessage::Event(event) => Some(event),
+                            ServerMessage::Pong(Pong { counter })=> {
+                                if counter == local_ping_counter {
+                                    local_ping_counter += 1;
+                                    None
+                                } else {
+                                    // received pong from server, but counter is mismatch
+                                    break;
+                                }
+                            },
+                            _ =>{
+                                warn!("received unexpected message, {:?}", msg);
+                                None
+                            },
+                        };
 
-                        debug!(?closed, "client connection status");
-
-                        if closed {
-                            break;
-                        } else {
-                            SessionState::Idle
+                        match event {
+                            Some(event) => SessionState::EventRelayed { event },
+                            None => SessionState::Idle
                         }
                     }
                 }
