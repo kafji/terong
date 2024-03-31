@@ -175,9 +175,12 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
         mut state,
     } = session;
 
-    let interval = Duration::from_secs(5);
-    let mut ping_ticker = interval_at(Instant::now() + interval, interval);
-    ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut ping_ticker = {
+        let interval = Duration::from_secs(5);
+        let mut ticker = interval_at(Instant::now() + interval, interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ticker
+    };
 
     let mut local_ping_counter = 1;
 
@@ -216,8 +219,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                             let msg = Ping { counter: local_ping_counter }.into();
                             match transport.send_msg(msg).await {
                                 Ok(_) => {
-                                    local_ping_counter += 1;
                                     debug!("ping sent successfully, incrementing local counter");
+                                    local_ping_counter += 1;
                                     SessionState::Idle
                                 },
                                 Err(err) => {
@@ -228,6 +231,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                         } else {
                             // even, client has sent ping a tick before
                             // but client has not receive pong from server
+                            info!("terminating session, heartbeat timed out");
                             break;
                         }
                     }
@@ -237,8 +241,9 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                             ServerMessage::Event(event) => Some(event),
                             ServerMessage::Pong(Pong { counter })=> {
                                 if counter == local_ping_counter {
+                                    debug!("received pong, incrementing local counter, resetting ticker");
+                                    ping_ticker.reset_immediately();
                                     local_ping_counter += 1;
-                                    debug!("received pong, incrementing local counter");
                                     None
                                 } else {
                                     // received pong from server, but counter is mismatch

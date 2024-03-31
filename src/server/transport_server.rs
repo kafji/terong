@@ -219,10 +219,12 @@ async fn run_session(session: Session) -> Result<(), Error> {
         state: state_ref,
     } = session;
 
-    let interval = Duration::from_secs(10);
-    let mut ping_ticker = interval_at(Instant::now() + interval, interval);
-    ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
+    let mut ping_ticker = {
+        let interval = Duration::from_secs(10);
+        let mut ticker = interval_at(Instant::now() + interval, interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ticker
+    };
     let mut local_ping_counter = 1;
 
     loop {
@@ -270,7 +272,8 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         match msg {
                             ClientMessage::Ping(Ping { counter }) => {
                                 if counter == local_ping_counter {
-                                    debug!("received ping, incrementing local counter");
+                                    debug!("received ping, incrementing local counter, resetting ticker");
+                                    ping_ticker.reset_immediately();
                                     local_ping_counter += 1;
                                     SessionState::Idle
                                 } else {
@@ -285,7 +288,10 @@ async fn run_session(session: Session) -> Result<(), Error> {
                     event = event_rx.recv() => {
                         match event {
                             Some(event) => SessionState::RelayingEvent { event },
-                            None => break,
+                            None => {
+                                info!("terminating session, event channel was closed");
+                                break;
+                            },
                         }
                     }
                 }
