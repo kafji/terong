@@ -222,7 +222,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
     } = session;
 
     let mut ping_ticker = {
-        let interval = Duration::from_secs(30);
+        let interval = Duration::from_secs(15);
         let mut ticker = interval_at(Instant::now() + interval, interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ticker
