@@ -65,18 +65,34 @@ async fn run_transport_client(args: TransportClient) {
         Arc::new(tls)
     };
 
+    let mut retry_count = 0;
+
     loop {
-        if let Err(err) = connect(&server_addr, tls_config.clone(), &event_tx).await {
+        if let Err(err) = connect(
+            &server_addr,
+            tls_config.clone(),
+            &event_tx,
+            &mut retry_count,
+        )
+        .await
+        {
             log_error!(err);
 
-            match err {
-                ConnectError::Timeout { .. } => {
-                    break;
-                }
-                ConnectError::Other(_) => {
-                    sleep(Duration::from_secs(5)).await;
-                }
+            if retry_count > 3 {
+                info!("giving up after {} retries", retry_count);
+                break;
             }
+
+            let delay = match err {
+                ConnectError::Timeout { .. } => Duration::from_secs(30),
+                ConnectError::Other(_) => Duration::from_secs(15),
+            };
+
+            info!("reconnecting in {} secs", delay.as_secs());
+            sleep(delay).await;
+
+            retry_count += 1;
+            debug!("retry count incremented to {}", retry_count);
         }
     }
 }
@@ -113,6 +129,7 @@ async fn connect(
     server_addr: &SocketAddr,
     tls_config: Arc<ClientConfig>,
     event_tx: &mpsc::Sender<InputEvent>,
+    retry_count: &mut u8,
 ) -> Result<(), ConnectError> {
     info!(?server_addr, "connecting to server");
 
@@ -128,6 +145,9 @@ async fn connect(
     };
 
     info!(?server_addr, "connected to server");
+
+    *retry_count = 0;
+    debug!("retry count reset to zero");
 
     let transporter: ClientTransporter = Transporter::Plain(Transport::new(stream));
 
