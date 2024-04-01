@@ -4,7 +4,6 @@ use tracing_subscriber::EnvFilter;
 pub fn init_tracing() {
     tracing_subscriber::fmt()
         .with_env_filter(env_filter())
-        .with_thread_ids(true)
         .init();
 }
 
