@@ -221,9 +221,9 @@ async fn run_session(session: Session) -> Result<(), Error> {
         state: state_ref,
     } = session;
 
+    let ping_ticker_interval = Duration::from_secs(60);
     let mut ping_ticker = {
-        let interval = Duration::from_secs(15);
-        let mut ticker = interval_at(Instant::now() + interval, interval);
+        let mut ticker = interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ticker
     };
@@ -266,7 +266,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                         if local_ping_counter % 2 == 1 {
                             // it has been a tick since last ping-pong or since the session was established
                             // yet server has not receive ping from client
-                            info!("terminating session, heartbeat timed out");
+                            info!("haven't heard ping from client for {} secs, terminating session", ping_ticker_interval.as_secs());
                             break;
                         }
 
