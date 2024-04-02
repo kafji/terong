@@ -240,7 +240,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
                                     SessionState::Idle
                                 },
                                 Err(err) => {
-                                    error!("failed to send ping, {:?}", err);
+                                    error!(?err, "failed to send ping");
                                     break;
                                 },
                             }

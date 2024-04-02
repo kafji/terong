@@ -284,7 +284,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
                                     match transport.send_msg(msg).await {
                                         Ok(_) => (),
                                         Err(err) => {
-                                            error!("failed to send pong, {:?}", err);
+                                            error!(?err, "failed to send pong");
                                             break;
                                         },
                                     }
