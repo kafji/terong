@@ -83,12 +83,12 @@ async fn run_transport_client(args: TransportClient) {
                 break;
             }
 
-            let delay = Duration::from_secs(15);
-            info!("reconnecting in {} secs", delay.as_secs());
-            sleep(delay).await;
-
             retry_count += 1;
             debug!("retry count incremented to {}", retry_count);
+
+            let delay = Duration::from_secs(15);
+            info!("reconnecting in {} secs ({})", delay.as_secs(), retry_count);
+            sleep(delay).await;
         }
     }
 }
