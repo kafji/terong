@@ -191,7 +191,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
         mut state,
     } = session;
 
-    let ping_ticker_interval = Duration::from_secs(20);
+    let ping_ticker_interval = Duration::from_secs(15);
     let mut ping_ticker = {
         let mut ticker = interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
