@@ -8,7 +8,6 @@ use crate::{
 use anyhow::Error;
 use serde::Deserialize;
 use std::{
-    env,
     io::Cursor,
     path::{Path, PathBuf},
 };
@@ -74,24 +73,12 @@ impl Config {
 }
 
 fn config_paths() -> impl Iterator<Item = PathBuf> {
-    [
-        // in cwd
-        Some("./terong.toml".into()),
-        // in os specific config dir
-        {
-            #[cfg(target_os = "linux")]
-            {
-                env::var("XDG_CONFIG_HOME").ok().map(PathBuf::from)
-            }
-            #[cfg(target_os = "windows")]
-            {
-                env::var("LOCALAPPDATA").ok().map(PathBuf::from)
-            }
-        }
-        .map(|x| x.join("net.kafji.terong").join("terong.toml")),
-    ]
-    .into_iter()
-    .flatten()
+    // there used to be 2 elements in here:
+    //   1. in cwd, `./terong.toml`
+    //   2. in os specific config dir, i.e.
+    //     linux: `XDG_CONFIG_HOME/{namespace}/terong.toml`,
+    //     windows: `LOCALAPPDATA/{namespace}/terong.toml`
+    ["./terong.toml".into()].into_iter()
 }
 
 pub async fn read_certs(path: &Path) -> Result<Vec<Certificate>, Error> {
