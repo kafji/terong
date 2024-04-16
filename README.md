@@ -1,4 +1,4 @@
-# Duangler
+# Terong
 
 A [KVM switch software](https://en.wikipedia.org/wiki/KVM_switch).
 
@@ -14,8 +14,8 @@ A [KVM switch software](https://en.wikipedia.org/wiki/KVM_switch).
 
 - Rust toolchain as described in https://rustup.rs/.
 
-### Install
+### Build
 
 - Clone repository.
-- Run `cargo build --release`.
-- Find binaries in `./target/release`.
+- Run `./build.sh` or `.\build.bat`.
+- Find binaries in `.`.

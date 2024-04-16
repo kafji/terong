@@ -1,4 +1,4 @@
 #[tokio::main]
 async fn main() {
-    duangler::client::run().await;
+    terong::client::run().await;
 }

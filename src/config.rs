@@ -76,7 +76,7 @@ impl Config {
 fn config_paths() -> impl Iterator<Item = PathBuf> {
     [
         // in cwd
-        Some("./duangler.toml".into()),
+        Some("./terong.toml".into()),
         // in os specific config dir
         {
             #[cfg(target_os = "linux")]
@@ -88,7 +88,7 @@ fn config_paths() -> impl Iterator<Item = PathBuf> {
                 env::var("LOCALAPPDATA").ok().map(PathBuf::from)
             }
         }
-        .map(|x| x.join("net.kafji.duangler").join("duangler.toml")),
+        .map(|x| x.join("net.kafji.terong").join("terong.toml")),
     ]
     .into_iter()
     .flatten()
@@ -126,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_parse_example() {
-        let mut file = File::open("./example.duangler.toml").await.unwrap();
+        let mut file = File::open("./example.terong.toml").await.unwrap();
         Config::from_file(&mut file).await.unwrap();
     }
 }

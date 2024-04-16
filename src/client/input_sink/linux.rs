@@ -30,7 +30,7 @@ fn create_virtual_device() -> Result<UninitDevice, Error> {
     let dev =
         UninitDevice::new().ok_or_else(|| anyhow!("failed to create virtual evdev device"))?;
 
-    dev.set_name("Duangler Virtual Input Device");
+    dev.set_name("Terong Virtual Input Device");
     dev.set_bustype(BusType::BUS_USB as _);
 
     dev.enable_event_type(&EventType::EV_SYN)?;

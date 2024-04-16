@@ -1,5 +1,5 @@
 #!/bin/bash
 
 cargo build --release && \
-  cp target/release/duangler-server . && \
-  cp target/release/duangler-client .
+  cp target/release/terong-server . && \
+  cp target/release/terong-client .

@@ -1,3 +1,3 @@
 cargo build --release && ^
-copy target\release\duangler-server.exe . && ^
-copy target\release\duangler-client.exe .
+copy target\release\terong-server.exe . && ^
+copy target\release\terong-client.exe .
