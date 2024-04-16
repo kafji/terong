@@ -13,12 +13,11 @@ futures = "0.3"
 hex = "0.4"
 macross = { git = "https://github.com/kafji/macross", features = ["typing"] }
 paste = "1.0"
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
 rustls-pemfile = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1.37", features = ["full"] }
-tokio-rustls = "0.24"
+tokio-rustls = { version = "0.24", features = ["dangerous_configuration"] }
 toml = "0.7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [

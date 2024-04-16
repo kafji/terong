@@ -5,11 +5,6 @@ use anyhow::{bail, Error};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::Future;
 use macross::newtype;
-use rustls::{
-    client::{ServerCertVerified, ServerCertVerifier},
-    server::{ClientCertVerified, ClientCertVerifier},
-    DistinguishedName, ServerName,
-};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     convert::TryInto,
@@ -18,6 +13,12 @@ use std::{
     time::SystemTime,
 };
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio_rustls::rustls::{
+    self,
+    client::{ServerCertVerified, ServerCertVerifier},
+    server::{ClientCertVerified, ClientCertVerifier},
+    DistinguishedName, ServerName,
+};
 use tracing::debug;
 
 /// Protocol message marker trait.

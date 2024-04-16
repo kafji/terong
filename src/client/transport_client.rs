@@ -7,7 +7,6 @@ use crate::{
 };
 use anyhow::{Context, Error};
 use macross::impl_from;
-use rustls::{ClientConfig, ServerName};
 use std::{
     fmt,
     net::{IpAddr, SocketAddr},
@@ -22,7 +21,10 @@ use tokio::{
     task::{self, JoinHandle},
     time::{interval_at, sleep, Instant, MissedTickBehavior},
 };
-use tokio_rustls::{TlsConnector, TlsStream};
+use tokio_rustls::{
+    rustls::{self, ClientConfig, ServerName},
+    TlsConnector, TlsStream,
+};
 use tracing::{debug, error, info};
 
 /// Time it takes before client giving up on connecting to the server.

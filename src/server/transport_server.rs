@@ -363,9 +363,9 @@ fn create_server_tls_config(
         .with_single_cert(
             server_certs
                 .into_iter()
-                .map(|x| rustls::Certificate(x.into()))
+                .map(|x| tokio_rustls::rustls::Certificate(x.into()))
                 .collect(),
-            rustls::PrivateKey(server_key.into()),
+            tokio_rustls::rustls::PrivateKey(server_key.into()),
         )
         .context("failed to create server config tls")?;
 
