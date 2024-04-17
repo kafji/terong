@@ -64,19 +64,22 @@ fn run_input_sink(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error>
     let uidev = UInputDevice::create_from_device(&dev)?;
 
     while let Some(event) = event_rx.blocking_recv() {
-        let events: Vec<LinuxInputEvent> = event.try_into()?;
+        let events: Vec<LinuxInputEvent> = event.into_vec()?;
 
-        for e in &events {
-            uidev.write_event(&e)?;
+        for event in &events {
+            uidev.write_event(&event)?;
         }
     }
 
     Ok(())
 }
 
-impl TryInto<Vec<LinuxInputEvent>> for InputEvent {
-    type Error = Error;
-    fn try_into(self) -> Result<Vec<LinuxInputEvent>, Self::Error> {
+trait IntoVec {
+    fn into_vec(self) -> Result<Vec<LinuxInputEvent>, Error>;
+}
+
+impl IntoVec for InputEvent {
+    fn into_vec(self) -> Result<Vec<LinuxInputEvent>, Error> {
         let time = SystemTime::now().try_into()?;
 
         let es = match self {
