@@ -73,6 +73,9 @@ checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 [[package]]
 name = "belanda"
 version = "0.0.0"
+dependencies = [
+ "input-event",
+]
 
 [[package]]
 name = "bincode"
@@ -274,6 +277,18 @@ checksum = "168fb715dda47215e360912c096649d23d58bf392ac62f73919e831745e40f26"
 dependencies = [
  "equivalent",
  "hashbrown",
+]
+
+[[package]]
+name = "input-event"
+version = "0.0.0"
+dependencies = [
+ "evdev-rs",
+ "macross",
+ "paste",
+ "serde",
+ "strum",
+ "windows",
 ]
 
 [[package]]
@@ -684,6 +699,7 @@ dependencies = [
  "evdev-rs",
  "futures",
  "hex",
+ "input-event",
  "macross",
  "paste",
  "rustls-pemfile",

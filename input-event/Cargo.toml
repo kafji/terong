@@ -1,30 +1,13 @@
 [package]
-name = "terong"
+name = "input-event"
 version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0"
-async-trait = "0.1"
-bincode = "1.3"
-bytes = "1.6"
-cfg-if = "1.0"
-futures = "0.3"
-hex = "0.4"
-input-event = { path = "../input-event" }
 macross = { git = "https://github.com/kafji/macross", features = ["typing"] }
 paste = "1.0"
-rustls-pemfile = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
-tokio = { version = "1.37", features = ["full"] }
-tokio-rustls = { version = "0.24", features = ["dangerous_configuration"] }
-toml = "0.7"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = [
-    "fmt",
-    "env-filter",
-] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev-rs = "0.6"
