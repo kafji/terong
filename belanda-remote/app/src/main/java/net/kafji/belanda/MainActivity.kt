@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
             val stub = HelloServiceGrpc.newBlockingStub(channel)
             val message = HelloMessage.newBuilder().setName("Budi").build()
             val reply = stub.hello(message)
-            Log.d("kek", reply.name)
+            Log.d("kek", reply.greeting)
         }
     }
 }
