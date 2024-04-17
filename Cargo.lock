@@ -144,9 +144,9 @@ dependencies = [
  "anyhow",
  "input-event",
  "prost",
- "prost-build",
  "tokio",
  "tonic",
+ "tonic-build",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1281,6 +1281,19 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tonic-build"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be4ef6dd70a610078cb4e338a0f79d06bc759ff1b22d2120c2ff02ae264ba9c2"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "prost-build",
+ "quote",
+ "syn",
 ]
 
 [[package]]

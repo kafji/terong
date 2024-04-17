@@ -15,5 +15,5 @@ message HelloMessage {
 }
 
 message HelloReply {
-  string name = 1;
+  string greeting = 1;
 }
