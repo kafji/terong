@@ -19,7 +19,7 @@ serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1.37", features = ["full"] }
 tokio-rustls = { version = "0.24", features = ["dangerous_configuration"] }
-toml = "0.7"
+toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "fmt",
