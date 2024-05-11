@@ -30,4 +30,5 @@ jobs:
             cargo-${{ runner.os }}
 
       - name: Test
+        working-directory: ./rs
         run: cargo test
