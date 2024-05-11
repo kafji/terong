@@ -1,34 +1,7 @@
 package inputevent
 
-type EventCode uint16
-
-const (
-	CODE_MOUSE_MOVE EventCode = iota + 1
-	CODE_MOUSE_CLICK
-	CODE_MOUSE_SCROLL
-	CODE_KEYBOARD_KEY_DOWN
-	CODE_KEYBOARD_KEY_REPEAT
-	CODE_KEYBOARD_KEY_UP
-)
-
 type InputEvent struct {
-	Code EventCode `json:"code"`
-	Data any       `json:"data"`
-}
-
-func (e *InputEvent) Fix() {
-	switch e.Data.(type) {
-	case MouseMove:
-		e.Code = CODE_MOUSE_MOVE
-	case MouseClick:
-		e.Code = CODE_MOUSE_CLICK
-	case MouseScroll:
-		e.Code = CODE_MOUSE_SCROLL
-	}
-}
-
-func (e *InputEvent) UnmarshalCBOR([]byte) error {
-	return nil
+	Data any `json:"data"`
 }
 
 // mouse

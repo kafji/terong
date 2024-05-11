@@ -8,6 +8,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"kafji.net/terong/inputevent"
+	"kafji.net/terong/transport"
 )
 
 func Start() {
@@ -38,10 +39,38 @@ func Start() {
 			panic(err)
 		}
 
-		var event inputevent.InputEvent
-		err = cbor.Unmarshal(vBuf, &event)
+		var frame transport.Frame
+		err = cbor.Unmarshal(vBuf, &frame)
 		if err != nil {
 			panic(err)
+		}
+
+		var event inputevent.InputEvent
+
+		switch frame.Code {
+		case transport.CODE_MOUSE_MOVE:
+			var data inputevent.MouseMove
+			err := cbor.Unmarshal(frame.Data, &data)
+			if err != nil {
+				panic(err)
+			}
+			event.Data = data
+
+		case transport.CODE_MOUSE_CLICK:
+			var data inputevent.MouseClick
+			err := cbor.Unmarshal(frame.Data, &data)
+			if err != nil {
+				panic(err)
+			}
+			event.Data = data
+
+		case transport.CODE_MOUSE_SCROLL:
+			var data inputevent.MouseScroll
+			err := cbor.Unmarshal(frame.Data, &data)
+			if err != nil {
+				panic(err)
+			}
+			event.Data = data
 		}
 
 		fmt.Println(event)
