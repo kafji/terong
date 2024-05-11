@@ -22,7 +22,7 @@ LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     MSLLHOOKSTRUCT *details = (MSLLHOOKSTRUCT *)lParam;
 
-    input_event_t *input_event = calloc(1, sizeof(input_event_t));
+    input_event_t *input_event = malloc(sizeof(input_event_t));
     input_event->code = wParam;
 
     switch (input_event->code)
@@ -53,7 +53,7 @@ LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 {
     KBDLLHOOKSTRUCT *details = (KBDLLHOOKSTRUCT *)lParam;
 
-    input_event_t *input_event = calloc(1, sizeof(input_event_t));
+    input_event_t *input_event = malloc(sizeof(input_event_t));
     input_event->code = wParam;
 
     switch (input_event->code)
