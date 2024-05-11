@@ -1,6 +1,3 @@
 # Terong
 
-This repository hosts 2 projects:
-
-  1. [Terong](./terong), a KVM switch software.
-  2. [Belanda](./belanda)
+See [rs](./rs) for implementation in Rust, or see [go](./go) for its Go rewrite.
