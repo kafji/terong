@@ -1,9 +1,5 @@
 package inputevent
 
-type InputEvent struct {
-	Data any `json:"data"`
-}
-
 // mouse
 
 type MouseMove struct {
@@ -24,39 +20,179 @@ type MouseScroll struct {
 type MouseButton uint8
 
 const (
-	LEFT MouseButton = iota + 1
-	RIGHT
-	MIDDLE
-	MOUSE4
-	MOUSE5
+	MouseButtonLeft MouseButton = iota + 1
+	MouseButtonRight
+	MouseButtonMiddle
+	MouseButtonMouse4
+	MouseButtonMouse5
 )
 
 type MouseButtonAction uint8
 
 const (
-	ACTION_DOWN MouseButtonAction = iota + 1
-	ACTION_UP
+	MouseButtonActionDown MouseButtonAction = iota + 1
+	MouseButtonActionUp
 )
 
 type MouseScrollDirection uint8
 
 const (
-	SCROLL_UP MouseScrollDirection = iota + 1
-	SCROLL_DOWN
+	MOUSE_SCROLL_UP MouseScrollDirection = iota + 1
+	MOUSE_SCROLL_DOWN
 )
 
 // keyboard
 
-type KeyDown struct {
-	Key KeyCode `json:"key"`
+type KeyPress struct {
+	Key    KeyCode   `json:"key"`
+	Action KeyAction `json:"action"`
 }
 
-type KeyRepeat struct {
-	Key KeyCode `json:"key"`
-}
+type KeyAction uint8
 
-type KeyUp struct {
-	Key KeyCode `json:"key"`
-}
+const (
+	KeyActionDown KeyAction = iota + 1
+	KeyActionRepeat
+	KeyActionUp
+)
 
 type KeyCode uint16
+
+const (
+	Escape KeyCode = iota + 1
+
+	// function keys
+
+	F1
+	F2
+	F3
+	F4
+	F5
+	F6
+	F7
+	F8
+	F9
+	F10
+	F11
+	F12
+
+	PrintScreen
+	ScrollLock
+	PauseBreak
+
+	// The tilde key.
+	Grave
+
+	// digits
+
+	D1
+	D2
+	D3
+	D4
+	D5
+	D6
+	D7
+	D8
+	D9
+	D0
+
+	Minus
+	Equal
+
+	A
+	B
+	C
+	D
+	E
+	F
+	G
+	H
+	I
+	J
+	K
+	L
+	M
+	N
+	O
+	P
+	Q
+	R
+	S
+	T
+	U
+	V
+	W
+	X
+	Y
+	Z
+
+	LeftBrace
+	RightBrace
+
+	SemiColon
+	Apostrophe
+
+	Comma
+	Dot
+	Slash
+
+	Backspace
+	BackSlash
+	Enter
+
+	Space
+
+	Tab
+	CapsLock
+
+	LeftShift
+	RightShift
+
+	LeftCtrl
+	RightCtrl
+
+	LeftAlt
+	RightAlt
+
+	LeftMeta
+	RightMeta
+
+	Insert
+	Delete
+
+	Home
+	End
+
+	PageUp
+	PageDown
+
+	Up
+	Left
+	Down
+	Right
+)
+
+type Normalizer struct {
+	prev any
+}
+
+func (n *Normalizer) Normalize(event any) any {
+	prev, ok := n.prev.(KeyPress)
+	if !ok || prev.Action != KeyActionDown {
+		n.prev = event
+		return event
+	}
+
+	this, ok := event.(KeyPress)
+	if !ok || this.Action != KeyActionDown {
+		n.prev = event
+		return event
+	}
+
+	if this.Key != prev.Key {
+		n.prev = event
+		return event
+	}
+
+	return KeyPress{Key: this.Key, Action: KeyActionRepeat}
+}
