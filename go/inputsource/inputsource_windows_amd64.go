@@ -192,14 +192,14 @@ loop:
 
 				case C.WM_XBUTTONDOWN:
 					data := (*C.mouse_click_t)(unsafe.Pointer(&input.data))
-					button := fromXbutton(data.button)
+					button := xbuttonToMouseButton(data.button)
 					if button != 0 {
 						event = inputevent.MouseClick{Button: button, Action: inputevent.MouseButtonActionDown}
 					}
 
 				case C.WM_XBUTTONUP:
 					data := (*C.mouse_click_t)(unsafe.Pointer(&input.data))
-					button := fromXbutton(data.button)
+					button := xbuttonToMouseButton(data.button)
 					if button != 0 {
 						event = inputevent.MouseClick{Button: button, Action: inputevent.MouseButtonActionUp}
 					}
@@ -223,14 +223,14 @@ loop:
 					fallthrough
 				case C.WM_SYSKEYDOWN:
 					data := (*C.key_press_t)(unsafe.Pointer(&input.data))
-					key := toKeyCode(data.virtual_key)
+					key := keyCodeToVirtualKey(data.virtual_key)
 					event = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionDown}
 
 				case C.WM_KEYUP:
 					fallthrough
 				case C.WM_SYSKEYUP:
 					data := (*C.key_press_t)(unsafe.Pointer(&input.data))
-					key := toKeyCode(data.virtual_key)
+					key := keyCodeToVirtualKey(data.virtual_key)
 					event = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionUp}
 				}
 			}
@@ -295,7 +295,7 @@ func screenSize() point {
 	return point{x: uint16(rect.right - rect.left), y: uint16(rect.bottom - rect.top)}
 }
 
-func fromXbutton(xbutton C.WORD) inputevent.MouseButton {
+func xbuttonToMouseButton(xbutton C.WORD) inputevent.MouseButton {
 	var button inputevent.MouseButton
 	switch xbutton {
 	case C.XBUTTON1:
@@ -306,8 +306,8 @@ func fromXbutton(xbutton C.WORD) inputevent.MouseButton {
 	return button
 }
 
-// toKeyCode converts Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes to [inputevent.KeyCode].
-func toKeyCode(virtualKey C.DWORD) inputevent.KeyCode {
+// keyCodeToVirtualKey converts Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes to [inputevent.KeyCode].
+func keyCodeToVirtualKey(virtualKey C.DWORD) inputevent.KeyCode {
 
 	// todo(kfj): codegen?
 
