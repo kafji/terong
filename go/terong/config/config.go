@@ -10,7 +10,7 @@ const filePath = "./terong.toml"
 
 type Config struct {
 	LogLevel string `toml:"log_level"`
-	Server   Server `toml:"server`
+	Server   Server `toml:"server"`
 	Client   Client `toml:"client"`
 }
 
@@ -24,8 +24,11 @@ type Client struct {
 
 func ReadConfig() (Config, error) {
 	var c Config
-	file, _ := os.ReadFile(filePath)
-	err := toml.Unmarshal(file, &c)
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		return Config{}, err
+	}
+	err = toml.Unmarshal(file, &c)
 	if err != nil {
 		return Config{}, err
 	}

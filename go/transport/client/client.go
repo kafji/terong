@@ -53,6 +53,8 @@ func runSession(ctx context.Context, sess *transport.Session, events chan<- any)
 	done := make(chan error)
 
 	go func() {
+		defer close(done)
+
 		for {
 			select {
 			case <-ctx.Done():

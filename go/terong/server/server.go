@@ -17,10 +17,11 @@ import (
 
 var slog = logging.NewLogger("terong/server")
 
-func Start(ctx context.Context) error {
+func Start(ctx context.Context) {
 	cfg, err := config.ReadConfig()
 	if err != nil {
-		return err
+		slog.Error("failed to read config file", "error", err)
+		return
 	}
 
 	source := inputsource.Start()
@@ -40,11 +41,13 @@ func Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			slog.Error("cancelled", "error", err)
+			return
 
 		case input, ok := <-source.Inputs():
 			if !ok {
-				return fmt.Errorf("input source stopped: %v", source.Error())
+				slog.Error("input source stopped", "error", source.Error())
+				return
 			}
 
 			slog.Debug("input received", "input", input)
@@ -63,7 +66,8 @@ func Start(ctx context.Context) error {
 			}
 
 		case err := <-transport:
-			return err
+			slog.Error("transport error", "error", err)
+			return
 		}
 	}
 }

@@ -217,7 +217,8 @@ func (s *Session) WriteFrame(frm Frame) error {
 
 func (s *Session) WritePing() error {
 	frm := Frame{Tag: TagPing, Length: 0}
-	return s.WriteFrame(frm)
+	err := s.WriteFrame(frm)
+	return fmt.Errorf("failed to write ping: %v", err)
 }
 
 func (s *Session) ReadFrame() (Frame, error) {
