@@ -1,8 +1,6 @@
 package inputsource
 
 /*
-#include <errhandlingapi.h>
-#include <processthreadsapi.h>
 #include <windows.h>
 #include <winuser.h>
 
@@ -11,27 +9,48 @@ package inputsource
 import "C"
 
 import (
-	"log/slog"
 	"runtime"
 	"sync"
 	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"kafji.net/terong/inputevent"
+	"kafji.net/terong/logging"
 )
 
-type Handle struct {
-	mu           sync.Mutex
-	threadID     C.DWORD
-	moduleHandle C.HMODULE
-	stopped      bool
+var slog = logging.New("inputsource")
 
+type Handle struct {
+	mu       sync.Mutex
+	threadID C.DWORD
+	stopped  bool
+	err      error
+
+	inputs           chan any
 	captureMouseMove bool
 }
 
-func Start(sink chan<- any) *Handle {
-	h := &Handle{}
-	go run(h, sink)
+func Start() *Handle {
+	h := &Handle{inputs: make(chan any, 100)}
+	go func() {
+		err := run(h)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.stopped = true
+		h.err = err
+		close(h.inputs)
+	}()
 	return h
+}
+
+func (h *Handle) Inputs() <-chan any {
+	return h.inputs
+}
+
+func (h *Handle) Error() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.err
 }
 
 func (h *Handle) Stop() {
@@ -42,7 +61,6 @@ func (h *Handle) Stop() {
 		case h.stopped:
 			done = true
 		case h.threadID == 0:
-			slog.Debug("thread id is unset")
 		default:
 			C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_CONTROL_COMMAND, C.CONTROL_COMMAND_STOP, 0)
 			done = true
@@ -54,18 +72,17 @@ func (h *Handle) Stop() {
 	}
 }
 
-func (h *Handle) SetShouldEatInput(flag bool) {
+func (h *Handle) SetEatInput(flag bool) {
 	for {
 		h.mu.Lock()
 		done := false
 		switch {
 		case h.threadID == 0:
-			slog.Debug("thread id is unset")
 		default:
 			if flag {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_SHOULD_EAT_INPUT, C.TRUE, 0)
+				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_EAT_INPUT, C.TRUE, 0)
 			} else {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_SHOULD_EAT_INPUT, C.FALSE, 0)
+				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_EAT_INPUT, C.FALSE, 0)
 			}
 			done = true
 		}
@@ -82,7 +99,6 @@ func (h *Handle) SetCaptureMouseMove(flag bool) {
 		done := false
 		switch {
 		case h.threadID == 0:
-			slog.Debug("thread id is unset")
 		default:
 			if flag {
 				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_MOUSE_MOVE, C.TRUE, 0)
@@ -98,12 +114,9 @@ func (h *Handle) SetCaptureMouseMove(flag bool) {
 	}
 }
 
-func run(h *Handle, sink chan<- any) {
+func run(handle *Handle) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-
-	// todo(kfj): handle errors from win32 calls
-	// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
 
 	var mouseHook C.HHOOK
 	var keyboardHook C.HHOOK
@@ -117,22 +130,41 @@ func run(h *Handle, sink chan<- any) {
 		}
 	}()
 
-	func() {
-		h.mu.Lock()
-		defer h.mu.Unlock()
+	err := func() error {
+		handle.mu.Lock()
+		defer handle.mu.Unlock()
 
-		h.threadID = C.GetCurrentThreadId()
+		handle.threadID = C.GetCurrentThreadId()
 
-		C.GetModuleHandleEx(0, nil, &h.moduleHandle)
+		// https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandleexw
+		var moduleHandle C.HMODULE
+		ret := C.GetModuleHandleExW(0, nil, &moduleHandle)
+		if ret == 0 {
+			return windows.GetLastError()
+		}
 
 		// https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc
-		mouseHook = C.SetWindowsHookExW(C.WH_MOUSE_LL, (*[0]byte)(C.mouse_hook_proc), h.moduleHandle, 0)
+		mouseHook = C.SetWindowsHookExW(C.WH_MOUSE_LL, (*[0]byte)(C.mouse_hook_proc), moduleHandle, 0)
+		if mouseHook == nil {
+			return windows.GetLastError()
+		}
 
 		// https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc
-		keyboardHook = C.SetWindowsHookExW(C.WH_KEYBOARD_LL, (*[0]byte)(C.keyboard_hook_proc), h.moduleHandle, 0)
-	}()
+		keyboardHook = C.SetWindowsHookExW(C.WH_KEYBOARD_LL, (*[0]byte)(C.keyboard_hook_proc), moduleHandle, 0)
+		if keyboardHook == nil {
+			return windows.GetLastError()
+		}
 
-	screen := screenSize()
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	screen, err := screenSize()
+	if err != nil {
+		return err
+	}
 	center := point{x: screen.x / 2, y: screen.y / 2}
 
 	normalizer := inputevent.Normalizer{}
@@ -140,130 +172,133 @@ func run(h *Handle, sink chan<- any) {
 	// https://learn.microsoft.com/en-us/windows/win32/winmsg/using-messages-and-message-queues
 loop:
 	for {
-		if h.captureMouseMove {
+		// Achtung!
+		//
+		// This message loop must never be blocked.
+		//
+		// When this loop get blocked the user's input will get incredibly choppy.
+		//
+		// Past cases where this message loop get blocked were:
+		//
+		// 1. Sending to unbuffered channel.
+		// 2. Writing to stdio + QuickEdit.
+
+		if handle.captureMouseMove {
 			// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursorpos
-			C.SetCursorPos(C.int(center.x), C.int(center.y))
+			ret := C.SetCursorPos(C.int(center.x), C.int(center.y))
+			if ret == 0 {
+				return windows.GetLastError()
+			}
 		}
 
+		// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmessagew
 		var msg C.MSG
-		ret := C.GetMessageW(&msg, nil, 0, 0)
-		if ret == -1 {
+		ret := C.get_message(&msg)
+		if ret == 0 {
 			break
+		}
+		if ret < 0 {
+			return windows.GetLastError()
 		}
 
 		switch msg.message {
-
-		case C.MESSAGE_CODE_INPUT_EVENT:
-			input := C.get_input_event()
-
-			var event any
-
+		case C.MESSAGE_CODE_HOOK_EVENT:
+			hookEvent := C.get_hook_event()
+			var input any
 			switch msg.wParam {
-
 			case C.WH_MOUSE_LL:
-				switch input.code {
-
+				switch hookEvent.code {
 				case C.WM_MOUSEMOVE:
-					if !h.captureMouseMove {
+					if !handle.captureMouseMove {
 						continue
 					}
-					data := (*C.mouse_move_t)(unsafe.Pointer(&input.data))
+					data := (*C.mouse_move_t)(unsafe.Pointer(&hookEvent.data))
 					dx := data.x - C.LONG(center.x)
-					dy := (data.y - C.LONG(center.y)) * -1
-					event = inputevent.MouseMove{DX: int16(dx), DY: int16(dy)}
+					dy := -(data.y - C.LONG(center.y))
+					input = inputevent.MouseMove{DX: int16(dx), DY: int16(dy)}
 
 				case C.WM_LBUTTONDOWN:
-					event = inputevent.MouseClick{Button: inputevent.MouseButtonLeft, Action: inputevent.MouseButtonActionDown}
+					input = inputevent.MouseClick{Button: inputevent.MouseButtonLeft, Action: inputevent.MouseButtonActionDown}
 
 				case C.WM_LBUTTONUP:
-					event = inputevent.MouseClick{Button: inputevent.MouseButtonLeft, Action: inputevent.MouseButtonActionUp}
+					input = inputevent.MouseClick{Button: inputevent.MouseButtonLeft, Action: inputevent.MouseButtonActionUp}
 
 				case C.WM_RBUTTONDOWN:
-					event = inputevent.MouseClick{Button: inputevent.MouseButtonRight, Action: inputevent.MouseButtonActionDown}
+					input = inputevent.MouseClick{Button: inputevent.MouseButtonRight, Action: inputevent.MouseButtonActionDown}
 
 				case C.WM_RBUTTONUP:
-					event = inputevent.MouseClick{Button: inputevent.MouseButtonRight, Action: inputevent.MouseButtonActionUp}
+					input = inputevent.MouseClick{Button: inputevent.MouseButtonRight, Action: inputevent.MouseButtonActionUp}
 
 				case C.WM_MBUTTONDOWN:
-					event = inputevent.MouseClick{Button: inputevent.MouseButtonMiddle, Action: inputevent.MouseButtonActionDown}
+					input = inputevent.MouseClick{Button: inputevent.MouseButtonMiddle, Action: inputevent.MouseButtonActionDown}
 
 				case C.WM_MBUTTONUP:
-					event = inputevent.MouseClick{Button: inputevent.MouseButtonMiddle, Action: inputevent.MouseButtonActionUp}
+					input = inputevent.MouseClick{Button: inputevent.MouseButtonMiddle, Action: inputevent.MouseButtonActionUp}
 
 				case C.WM_XBUTTONDOWN:
-					data := (*C.mouse_click_t)(unsafe.Pointer(&input.data))
+					data := (*C.mouse_click_t)(unsafe.Pointer(&hookEvent.data))
 					button := xbuttonToMouseButton(data.button)
 					if button != 0 {
-						event = inputevent.MouseClick{Button: button, Action: inputevent.MouseButtonActionDown}
+						input = inputevent.MouseClick{Button: button, Action: inputevent.MouseButtonActionDown}
 					}
 
 				case C.WM_XBUTTONUP:
-					data := (*C.mouse_click_t)(unsafe.Pointer(&input.data))
+					data := (*C.mouse_click_t)(unsafe.Pointer(&hookEvent.data))
 					button := xbuttonToMouseButton(data.button)
 					if button != 0 {
-						event = inputevent.MouseClick{Button: button, Action: inputevent.MouseButtonActionUp}
+						input = inputevent.MouseClick{Button: button, Action: inputevent.MouseButtonActionUp}
 					}
 
 				case C.WM_MOUSEWHEEL:
-					data := (*C.mouse_scroll_t)(unsafe.Pointer(&input.data))
+					data := (*C.mouse_scroll_t)(unsafe.Pointer(&hookEvent.data))
 					count := int(data.distance) / int(C.WHEEL_DELTA)
 					switch {
 					case count > 0:
-						event = inputevent.MouseScroll{Count: uint8(count), Direction: inputevent.MOUSE_SCROLL_UP}
+						input = inputevent.MouseScroll{Count: uint8(count), Direction: inputevent.MOUSE_SCROLL_UP}
 					case count < 0:
-						event = inputevent.MouseScroll{Count: uint8(count * -1), Direction: inputevent.MOUSE_SCROLL_DOWN}
+						input = inputevent.MouseScroll{Count: uint8(-count), Direction: inputevent.MOUSE_SCROLL_DOWN}
 					case count == 0:
 					}
 				}
 
 			case C.WH_KEYBOARD_LL:
-				switch input.code {
-
+				switch hookEvent.code {
 				case C.WM_KEYDOWN:
 					fallthrough
 				case C.WM_SYSKEYDOWN:
-					data := (*C.key_press_t)(unsafe.Pointer(&input.data))
+					data := (*C.key_press_t)(unsafe.Pointer(&hookEvent.data))
 					key := keyCodeToVirtualKey(data.virtual_key)
-					event = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionDown}
+					input = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionDown}
 
 				case C.WM_KEYUP:
 					fallthrough
 				case C.WM_SYSKEYUP:
-					data := (*C.key_press_t)(unsafe.Pointer(&input.data))
+					data := (*C.key_press_t)(unsafe.Pointer(&hookEvent.data))
 					key := keyCodeToVirtualKey(data.virtual_key)
-					event = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionUp}
+					input = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionUp}
 				}
 			}
 
-			if event != nil {
-				event = normalizer.Normalize(event)
-				// if the message pump blocked, user's input e.g. their mouse movements and key strokes, will get choppy
+			if input != nil {
+				input = normalizer.Normalize(input)
 				select {
-				case sink <- event:
+				case handle.inputs <- input:
 				default:
-					slog.Warn("dropping event, channel was blocked", "event", event)
+					slog.Warn("dropping input, channel was blocked", "input", input)
 				}
 			}
 
 		case C.MESSAGE_CODE_CONTROL_COMMAND:
 			switch msg.wParam {
 			case C.CONTROL_COMMAND_STOP:
-				h.mu.Lock()
-				h.stopped = true
-				h.mu.Unlock()
+				handle.mu.Lock()
+				handle.stopped = true
+				handle.mu.Unlock()
 				break loop
 			}
 
-		case C.MESSAGE_CODE_SET_SHOULD_EAT_INPUT:
-			var flag bool
-			switch C.BOOL(msg.wParam) {
-			case C.TRUE:
-				flag = true
-			case C.FALSE:
-				flag = false
-			}
-			slog.Info("setting should eat input", "value", flag)
-			C.set_should_eat_input(C.BOOL(msg.wParam))
+		case C.MESSAGE_CODE_SET_EAT_INPUT:
+			C.set_eat_input(C.BOOL(msg.wParam))
 
 		case C.MESSAGE_CODE_SET_CAPTURE_MOUSE_MOVE:
 			var flag bool
@@ -273,14 +308,11 @@ loop:
 			case C.FALSE:
 				flag = false
 			}
-			slog.Info("setting capture mouse move", "value", flag)
-			h.captureMouseMove = flag
-
-		default:
-			// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-dispatchmessagew
-			C.DispatchMessageW(&msg)
+			handle.captureMouseMove = flag
 		}
 	}
+
+	return nil
 }
 
 type point struct {
@@ -288,11 +320,15 @@ type point struct {
 	y uint16
 }
 
-func screenSize() point {
+func screenSize() (point, error) {
 	rect := C.RECT{}
 	// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow
-	C.SystemParametersInfoW(C.SPI_GETWORKAREA, 0, C.PVOID(&rect), 0)
-	return point{x: uint16(rect.right - rect.left), y: uint16(rect.bottom - rect.top)}
+	ret := C.SystemParametersInfoW(C.SPI_GETWORKAREA, 0, C.PVOID(&rect), 0)
+	if ret == 0 {
+		return point{}, windows.GetLastError()
+
+	}
+	return point{x: uint16(rect.right - rect.left), y: uint16(rect.bottom - rect.top)}, nil
 }
 
 func xbuttonToMouseButton(xbutton C.WORD) inputevent.MouseButton {

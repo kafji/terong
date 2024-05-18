@@ -3,15 +3,17 @@ package server
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"slices"
 	"time"
 
 	"kafji.net/terong/inputevent"
 	"kafji.net/terong/inputsource"
+	"kafji.net/terong/logging"
 	"kafji.net/terong/terong"
 	"kafji.net/terong/transport/server"
 )
+
+var slog = logging.New("terong/server")
 
 func Start(ctx context.Context, args terong.Args) error {
 	cfg, err := terong.ReadConfig(args.ConfigFile)
@@ -19,57 +21,49 @@ func Start(ctx context.Context, args terong.Args) error {
 		return err
 	}
 
-	sourceInputs := make(chan any, 100)
-	sourceHandle := inputsource.Start(sourceInputs)
-	defer sourceHandle.Stop()
+	source := inputsource.Start()
+	defer source.Stop()
 
-	transportEvents := make(chan any, 100)
-	transportError := make(chan error)
-	go func() {
-		addr := fmt.Sprintf(":%d", cfg.Port)
-		err := server.Start(ctx, addr, transportEvents)
-		transportError <- err
-	}()
+	events := make(chan any)
+	transport := server.Start(ctx, fmt.Sprintf(":%d", cfg.Port), events)
 
-	shouldRelay := false
+	relay := false
 	toggledAt := time.Time{}
 
 	buffer := keyBuffer{}
 
-	sourceHandle.SetShouldEatInput(shouldRelay)
-	sourceHandle.SetCaptureMouseMove(shouldRelay)
+	source.SetEatInput(relay)
+	source.SetCaptureMouseMove(relay)
 
-loop:
 	for {
 		select {
-
 		case <-ctx.Done():
 			return ctx.Err()
 
-		case err := <-transportError:
-			slog.Error("transport error", "error", err)
-			break loop
-
-		case input := <-sourceInputs:
-			slog.Debug("input event", "input", input)
-
-			if shouldRelay {
-				transportEvents <- input
+		case input, ok := <-source.Inputs():
+			if !ok {
+				return fmt.Errorf("input source stopped: %v", source.Error())
 			}
 
+			slog.Debug("input", "input", input)
+			if relay {
+				events <- input
+			}
 			if v, ok := input.(inputevent.KeyPress); ok {
 				buffer.push(v)
 			}
 			if yes, at := buffer.toggleKeyStrokeExists(toggledAt); yes {
-				shouldRelay = !shouldRelay
+				slog.Debug("toggling relay")
+				relay = !relay
 				toggledAt = at
-				sourceHandle.SetShouldEatInput(shouldRelay)
-				sourceHandle.SetCaptureMouseMove(shouldRelay)
+				source.SetEatInput(relay)
+				source.SetCaptureMouseMove(relay)
 			}
+
+		case <-transport.Done():
+			return transport.Error()
 		}
 	}
-
-	return nil
 }
 
 type keyBufferEntry struct {
