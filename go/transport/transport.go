@@ -16,7 +16,7 @@ var slog = logging.NewLogger("transport")
 
 const MaxLength = 2 /* sizeof tag */ + 2 /* sizeof length */ + 1020 /* sizeof value */
 
-const PingTimeout = 100 * time.Second
+const PingTimeout = 10 * time.Second
 
 const PingInterval = PingTimeout / 2
 

@@ -52,7 +52,7 @@ func run(ctx context.Context, addr string, events <-chan any) error {
 				continue
 			}
 			sess = &session{Session: transport.NewSession(conn)}
-			slog.Info("session established", "session", sess, "address", conn.RemoteAddr())
+			slog.Info("session established", "address", conn.RemoteAddr())
 			runSession(ctx, sess)
 
 		case event := <-events:
