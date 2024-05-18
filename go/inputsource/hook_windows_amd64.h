@@ -1,6 +1,8 @@
 #ifndef HOOK
 #define HOOK
 
+#define DEBUG
+
 #define MESSAGE_CODE_HOOK_EVENT WM_APP
 #define MESSAGE_CODE_CONTROL_COMMAND WM_APP + 1
 #define MESSAGE_CODE_SET_EAT_INPUT WM_APP + 2
@@ -51,7 +53,9 @@ LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam);
 
 void set_eat_input(BOOL flag);
 
-BOOL get_eat_input();
+LONGLONG get_mouse_hook_proc_worst();
+
+LONGLONG get_keyboard_hook_proc_worst();
 
 BOOL get_message(LPMSG lpMsg);
 

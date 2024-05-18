@@ -1,9 +1,8 @@
 package inputsource
 
 /*
+#cgo CFLAGS: -O2
 #include <windows.h>
-#include <winuser.h>
-
 #include "hook_windows_amd64.h"
 */
 import "C"
@@ -18,7 +17,7 @@ import (
 	"kafji.net/terong/logging"
 )
 
-var slog = logging.New("inputsource")
+var slog = logging.NewLogger("inputsource")
 
 type Handle struct {
 	mu       sync.Mutex
@@ -31,7 +30,7 @@ type Handle struct {
 }
 
 func Start() *Handle {
-	h := &Handle{inputs: make(chan any, 100)}
+	h := &Handle{inputs: make(chan any, 1_000)}
 	go func() {
 		err := run(h)
 		h.mu.Lock()
@@ -183,6 +182,10 @@ loop:
 		// 1. Sending to unbuffered channel.
 		// 2. Writing to stdio + QuickEdit.
 
+		if err := windows.GetLastError(); err != nil {
+			return err
+		}
+
 		if handle.captureMouseMove {
 			// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursorpos
 			ret := C.SetCursorPos(C.int(center.x), C.int(center.y))
@@ -200,6 +203,8 @@ loop:
 		if ret < 0 {
 			return windows.GetLastError()
 		}
+
+		slog.Debug("message received", "message", msg, "mouse_hook_proc_worst_ms", C.get_mouse_hook_proc_worst(), "keyboard_hook_proc_worst_ms", C.get_keyboard_hook_proc_worst())
 
 		switch msg.message {
 		case C.MESSAGE_CODE_HOOK_EVENT:
@@ -254,9 +259,9 @@ loop:
 					count := int(data.distance) / int(C.WHEEL_DELTA)
 					switch {
 					case count > 0:
-						input = inputevent.MouseScroll{Count: uint8(count), Direction: inputevent.MOUSE_SCROLL_UP}
+						input = inputevent.MouseScroll{Count: uint8(count), Direction: inputevent.MouseScrollUp}
 					case count < 0:
-						input = inputevent.MouseScroll{Count: uint8(-count), Direction: inputevent.MOUSE_SCROLL_DOWN}
+						input = inputevent.MouseScroll{Count: uint8(-count), Direction: inputevent.MouseScrollDown}
 					case count == 0:
 					}
 				}
@@ -283,6 +288,7 @@ loop:
 				input = normalizer.Normalize(input)
 				select {
 				case handle.inputs <- input:
+					slog.Debug("input sent", "input", input)
 				default:
 					slog.Warn("dropping input, channel was blocked", "input", input)
 				}

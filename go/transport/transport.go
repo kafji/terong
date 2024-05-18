@@ -12,13 +12,15 @@ import (
 	"kafji.net/terong/logging"
 )
 
-var slog = logging.New("transport")
+var slog = logging.NewLogger("transport")
 
 const MaxLength = 2 /* sizeof tag */ + 2 /* sizeof length */ + 1020 /* sizeof value */
 
-const PingTimeout = 10 * time.Second
+const PingTimeout = 100 * time.Second
 
-const PingInterval = 5 * time.Second
+const PingInterval = PingTimeout / 2
+
+const ReconnectDelay = 5 * time.Second
 
 var ErrMaxLengthExceeded = errors.New("frame length is larger than maximum value length")
 
@@ -37,7 +39,7 @@ const (
 
 var TagEvents = sync.OnceValue(func() []Tag {
 	tags := make([]Tag, 0)
-	for i := tagEventMinorant; i < tagEventMajorant; i++ {
+	for i := tagEventMinorant + 1; i < tagEventMajorant; i++ {
 		tags = append(tags, i)
 	}
 	return tags
@@ -143,12 +145,12 @@ func ReadFrame(r io.Reader) (Frame, error) {
 }
 
 type Session struct {
-	conn net.Conn
+	Conn net.Conn
 
 	mu           sync.Mutex
 	closed       bool
-	err          error
-	pingDeadline time.Time
+	inboxErr     error
+	pingDeadline chan struct{}
 
 	inbox chan Frame
 }
@@ -158,67 +160,59 @@ func EmptySession() *Session {
 }
 
 func NewSession(conn net.Conn) *Session {
-	s := &Session{conn: conn, inbox: make(chan Frame)}
-	s.start()
-	return s
-}
+	s := &Session{Conn: conn, inbox: make(chan Frame)}
 
-func (s *Session) start() {
 	go func() {
+		defer close(s.inbox)
 		for {
 			frm, err := s.ReadFrame()
 			if err != nil {
 				s.mu.Lock()
 				defer s.mu.Unlock()
-				s.err = err
-				close(s.inbox)
+				s.inboxErr = err
 				return
 			}
 			s.inbox <- frm
 		}
 	}()
+
+	return s
 }
 
 func (s *Session) Inbox() <-chan Frame {
 	return s.inbox
 }
 
-func (s *Session) Closed() bool {
+func (s *Session) InboxErr() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.closed
-}
-
-func (s *Session) Error() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.err
+	return s.inboxErr
 }
 
 func (s *Session) ResetPingDeadline() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pingDeadline = time.Now().Add(PingTimeout)
+	ch := make(chan struct{}, 1)
+	go func() {
+		time.After(time.Until(time.Now().Add(PingTimeout)))
+		ch <- struct{}{}
+	}()
+	s.pingDeadline = ch
 }
 
 func (s *Session) PingDeadline() <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ch := make(chan struct{})
-	go func() {
-		time.After(time.Until(s.pingDeadline))
-		ch <- struct{}{}
-	}()
-	return ch
+	return s.pingDeadline
 }
 
 func (s *Session) WriteFrame(frm Frame) error {
 	t := time.Now().Add(100 * time.Millisecond)
-	err := s.conn.SetWriteDeadline(t)
+	err := s.Conn.SetWriteDeadline(t)
 	if err != err {
 		return fmt.Errorf("failed to set write deadline: %v", err)
 	}
-	return WriteFrame(s.conn, frm)
+	return WriteFrame(s.Conn, frm)
 }
 
 func (s *Session) WritePing() error {
@@ -227,7 +221,7 @@ func (s *Session) WritePing() error {
 }
 
 func (s *Session) ReadFrame() (Frame, error) {
-	return ReadFrame(s.conn)
+	return ReadFrame(s.Conn)
 }
 
 func (s *Session) Close() {
@@ -240,12 +234,19 @@ func (s *Session) Close() {
 		return
 	}
 	s.closed = true
-	err := s.conn.Close()
+	err := s.Conn.Close()
 	if err != nil {
-		slog.Warn("failed to close connection",
+		slog.Warn(
+			"failed to close connection",
 			"error", err,
-			"local_addr", s.conn.LocalAddr(),
-			"remote_addr", s.conn.RemoteAddr(),
+			"local_addr", s.Conn.LocalAddr(),
+			"remote_addr", s.Conn.RemoteAddr(),
 		)
 	}
+}
+
+func (s *Session) Closed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
 }

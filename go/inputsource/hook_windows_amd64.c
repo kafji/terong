@@ -1,5 +1,4 @@
 #include <windows.h>
-#include <winuser.h>
 
 #include "hook_windows_amd64.h"
 
@@ -7,18 +6,31 @@ _Thread_local hook_event_t hook_event;
 
 _Thread_local BOOL eat_input;
 
+_Thread_local LONGLONG mouse_hook_proc_worst;
+
+_Thread_local LONGLONG keyboard_hook_proc_worst;
+
 void set_eat_input(BOOL flag)
 {
     eat_input = flag;
 }
 
-BOOL get_eat_input()
+LONGLONG get_mouse_hook_proc_worst()
 {
-    return eat_input;
+    return mouse_hook_proc_worst;
+}
+
+LONGLONG get_keyboard_hook_proc_worst()
+{
+    return keyboard_hook_proc_worst;
 }
 
 LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    LONGLONG t0 = t.QuadPart;
+
     MSLLHOOKSTRUCT *details = (MSLLHOOKSTRUCT *)lParam;
 
     hook_event.code = wParam;
@@ -42,6 +54,13 @@ LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 
     PostMessageW(NULL, MESSAGE_CODE_HOOK_EVENT, WH_MOUSE_LL, (LPARAM)NULL);
 
+    QueryPerformanceCounter(&t);
+    LONGLONG d = t.QuadPart / 1000 - t0 / 1000;
+    if (d > mouse_hook_proc_worst)
+    {
+        mouse_hook_proc_worst = d;
+    }
+
     if (eat_input)
     {
         return 1;
@@ -51,6 +70,10 @@ LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 
 LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    LONGLONG t0 = t.QuadPart;
+
     KBDLLHOOKSTRUCT *details = (KBDLLHOOKSTRUCT *)lParam;
 
     hook_event.code = wParam;
@@ -67,6 +90,13 @@ LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
 
     PostMessageW(NULL, MESSAGE_CODE_HOOK_EVENT, WH_KEYBOARD_LL, (LPARAM)NULL);
 
+    QueryPerformanceCounter(&t);
+    LONGLONG d = t.QuadPart / 1000 - t0 / 1000;
+    if (d > keyboard_hook_proc_worst)
+    {
+        keyboard_hook_proc_worst = d;
+    }
+
     if (eat_input)
     {
         return 1;
@@ -81,5 +111,5 @@ hook_event_t *get_hook_event()
 
 BOOL get_message(LPMSG lpMsg)
 {
-    return GetMessageW(lpMsg, (HWND)-1, WM_APP, 0xBFFF);
+    return GetMessageW(lpMsg, (HWND)-1, 0, 0);
 }

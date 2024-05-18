@@ -1,99 +1,108 @@
+//go:build linux
+
 package client
 
 import (
 	"context"
-	"fmt"
-	"log/slog"
 
 	"kafji.net/terong/inputsink"
+	"kafji.net/terong/logging"
 	"kafji.net/terong/terong/config"
 	"kafji.net/terong/transport/client"
 )
 
-func Start(ctx context.Context) error {
+var slog = logging.NewLogger("terong/client")
+
+func Start(ctx context.Context) {
+	watcher := config.Watch(ctx)
+
+restart:
 	cfg, err := config.ReadConfig()
 	if err != nil {
-		return fmt.Errorf("failed to read config: %v", err)
+		slog.Error("failed to read config", "error", err)
+		return
 	}
 
-	cancel, runErr := start(ctx, cfg)
-	defer cancel()
+	appCtx, cancelApp := context.WithCancel(ctx)
+	app := startApp(appCtx, cfg)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			slog.Error("cancelled", "error", err)
+			return
 
-		case err := <-runErr:
-			if err == context.Canceled {
-				continue
+		case err := <-app.done():
+			if err != nil {
+				slog.Error("app error", "error", err)
 			}
-			return err
+			return
 
-		case msg := <-config.Watch(ctx):
-			switch v := msg.(type) {
-			case error:
-				slog.Warn("config watcher error", "error", v)
-
-			case struct{}:
-				slog.Info("config changed")
-				cancel()
-				cfg, err := config.ReadConfig()
-				if err != nil {
-					return fmt.Errorf("failed to read config: %v", err)
-				}
-				cancel, runErr = start(ctx, cfg)
+		case _, ok := <-watcher.Changed():
+			if !ok {
+				slog.Error("watcher error", "error", watcher.Error())
+				return
 			}
+			slog.Info("config changed")
+			cancelApp()
+			goto restart
 		}
 	}
 }
 
-func start(ctx context.Context, cfg config.Config) (context.CancelFunc, <-chan error) {
-	ctx, cancel := context.WithCancel(ctx)
-	errs := make(chan error)
-	go func() {
-		defer close(errs)
-		err := run(ctx, cfg)
-		if err != nil {
-			errs <- err
-		}
-	}()
-	return cancel, errs
+type app struct {
+	cfg   config.Config
+	done_ chan error
 }
 
-func run(ctx context.Context, cfg config.Config) error {
-	slog.Info("starting app", "config", cfg)
+func startApp(ctx context.Context, cfg config.Config) *app {
+	a := &app{cfg: cfg, done_: make(chan error)}
 
-	transportEvents := make(chan any)
-	transportError := make(chan error)
-	go func() {
-		err := client.Start(ctx, cfg.Client.ServerAddr, transportEvents)
-		transportError <- err
-	}()
+	defer close(a.done_)
 
-	sinkInputs := make(chan any)
-	sinkError := make(chan error)
 	go func() {
-		err := inputsink.Start(ctx, sinkInputs)
-		if err != nil {
-			sinkError <- err
+		slog.Info("starting app", "config", a.cfg)
+
+		transportEvents := make(chan any)
+		transportError := make(chan error)
+		go func() {
+			err := client.Start(ctx, a.cfg.Client.ServerAddr, transportEvents)
+			transportError <- err
+		}()
+
+		sinkInputs := make(chan any)
+		sinkError := make(chan error)
+		go func() {
+			err := inputsink.Start(ctx, sinkInputs)
+			if err != nil {
+				sinkError <- err
+			}
+		}()
+
+		for {
+			select {
+			case <-ctx.Done():
+				a.done_ <- ctx.Err()
+				return
+
+			case err := <-transportError:
+				a.done_ <- err
+				return
+
+			case err := <-sinkError:
+				a.done_ <- err
+				return
+
+			case event := <-transportEvents:
+				slog.Debug("event", "event", event)
+				sinkInputs <- event
+			}
 		}
 	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
+	return a
+}
 
-		case err := <-transportError:
-			return err
-
-		case err := <-sinkError:
-			return err
-
-		case event := <-transportEvents:
-			slog.Debug("event", "event", event)
-			sinkInputs <- event
-		}
-	}
+func (a *app) done() <-chan error {
+	return a.done_
 }

@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -14,8 +16,5 @@ func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	ctx := context.Background()
-	err := client.Start(ctx)
-	if err != nil {
-		log.Fatalln(err)
-	}
+	client.Start(ctx)
 }

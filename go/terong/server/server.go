@@ -15,7 +15,7 @@ import (
 	"kafji.net/terong/transport/server"
 )
 
-var slog = logging.New("terong/server")
+var slog = logging.NewLogger("terong/server")
 
 func Start(ctx context.Context) error {
 	cfg, err := config.ReadConfig()
@@ -26,7 +26,7 @@ func Start(ctx context.Context) error {
 	source := inputsource.Start()
 	defer source.Stop()
 
-	events := make(chan any)
+	events := make(chan any, 1)
 	transport := server.Start(ctx, fmt.Sprintf(":%d", cfg.Server.Port), events)
 
 	relay := false
@@ -47,7 +47,7 @@ func Start(ctx context.Context) error {
 				return fmt.Errorf("input source stopped: %v", source.Error())
 			}
 
-			slog.Debug("input", "input", input)
+			slog.Debug("input received", "input", input)
 			if relay {
 				events <- input
 			}
@@ -62,8 +62,8 @@ func Start(ctx context.Context) error {
 				source.SetCaptureMouseMove(relay)
 			}
 
-		case <-transport.Done():
-			return transport.Error()
+		case err := <-transport:
+			return err
 		}
 	}
 }

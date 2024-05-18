@@ -9,6 +9,7 @@ use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
 use windows::Win32::Foundation::POINT;
+use windows::Win32::System::Performance::QueryPerformanceCounter;
 use windows::Win32::{
     Foundation::{GetLastError, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
@@ -201,6 +202,9 @@ fn get_cursor_locked_pos() -> MousePosition {
 
 /// Procedure for low level mouse hook.
 extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let mut t0: i64 = 0;
+    unsafe { QueryPerformanceCounter(&mut t0) };
+
     // per documentation, ncode will always be HC_ACTION
     assert_eq!(ncode, HC_ACTION as _);
 
@@ -288,6 +292,10 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         post_input_event(event, time);
     }
 
+    let mut t1: i64 = 0;
+    unsafe { QueryPerformanceCounter(&mut t1) };
+    debug!("mouse_hook_proc takes: {} ms", t1 / 1000 - t0 / 1000);
+
     if consume_input() {
         LRESULT(1)
     } else {
@@ -297,6 +305,9 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
 
 /// Procedure for low level keyboard hook.
 extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let mut t0: i64 = 0;
+    unsafe { QueryPerformanceCounter(&mut t0) };
+
     // per documentation, ncode will always be HC_ACTION
     assert_eq!(ncode, HC_ACTION as _);
 
@@ -322,6 +333,10 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
         let time = Duration::from_millis(hook_event.time as _);
         post_input_event(event, time);
     }
+
+    let mut t1: i64 = 0;
+    unsafe { QueryPerformanceCounter(&mut t1) };
+    debug!("keyboard_hook_proc takes: {} ms", t1 / 1000 - t0 / 1000);
 
     if consume_input() {
         LRESULT(1)

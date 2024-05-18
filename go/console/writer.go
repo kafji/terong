@@ -16,7 +16,7 @@ func (w *writer) Write(p []byte) (int, error) {
 	}
 
 	if w.wc == nil {
-		w.wc = make(chan []byte, 1<<16)
+		w.wc = make(chan []byte, 1_000)
 		go func() {
 			for {
 				b := <-w.wc
