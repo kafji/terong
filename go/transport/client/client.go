@@ -30,7 +30,7 @@ func Start(ctx context.Context, addr string, events chan<- any) <-chan error {
 				slog.Info("connected to server", "address", addr)
 				sess := transport.NewSession(conn)
 				sessErr := runSession(ctx, sess, events)
-				if err != <-sessErr {
+				if err := <-sessErr; err != nil {
 					slog.Error("session error", "error", err)
 				}
 				slog.Info("closing session", "address", sess.Conn.RemoteAddr())
