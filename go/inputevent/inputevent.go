@@ -20,12 +20,22 @@ type MouseScroll struct {
 type MouseButton uint8
 
 const (
-	MouseButtonLeft MouseButton = iota + 1
+	mouseButtonMinorant MouseButton = iota
+	MouseButtonLeft
 	MouseButtonRight
 	MouseButtonMiddle
 	MouseButtonMouse4
 	MouseButtonMouse5
+	mouseButtonMajorant
 )
+
+func MouseButtons() []MouseButton {
+	xs := make([]MouseButton, 0)
+	for i := mouseButtonMinorant + 1; i < mouseButtonMajorant; i++ {
+		xs = append(xs, i)
+	}
+	return xs
+}
 
 type MouseButtonAction uint8
 
@@ -37,8 +47,8 @@ const (
 type MouseScrollDirection uint8
 
 const (
-	MOUSE_SCROLL_UP MouseScrollDirection = iota + 1
-	MOUSE_SCROLL_DOWN
+	MouseScrollUp MouseScrollDirection = iota + 1
+	MouseScrollDown
 )
 
 // keyboard
@@ -59,7 +69,9 @@ const (
 type KeyCode uint16
 
 const (
-	Escape KeyCode = iota + 1
+	keyCodeMinorant KeyCode = iota
+
+	Escape
 
 	// function keys
 
@@ -170,7 +182,17 @@ const (
 	Left
 	Down
 	Right
+
+	keyCodeMajorant
 )
+
+func KeyCodes() []KeyCode {
+	xs := make([]KeyCode, 0)
+	for i := keyCodeMinorant + 1; i < keyCodeMajorant; i++ {
+		xs = append(xs, i)
+	}
+	return xs
+}
 
 type Normalizer struct {
 	prev any

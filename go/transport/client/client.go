@@ -1,12 +1,11 @@
 package client
 
 import (
-	"bufio"
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -17,17 +16,14 @@ import (
 func Start(ctx context.Context, addr string, events chan<- any) error {
 	for {
 		slog.Info("connecting to server", "address", addr)
-
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
 			slog.Error("failed to connect to server", "address", addr)
-
 			goto reconnect
 		}
 
 		slog.Info("connected to server", "address", addr)
-
-		err = runSession(ctx, &session{conn: conn, events: events})
+		err = runSession(ctx, &session{Session: transport.NewSession(conn), events: events})
 		if err != nil {
 			return errors.Join(errors.New("session error"), err)
 		}
@@ -43,82 +39,68 @@ func Start(ctx context.Context, addr string, events chan<- any) error {
 }
 
 type session struct {
-	conn   net.Conn
+	*transport.Session
 	events chan<- any
 }
 
 func runSession(ctx context.Context, sess *session) error {
-	defer sess.conn.Close()
+	defer sess.Close()
 
-	reader := bufio.NewReader(sess.conn)
-
-loop:
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case <-time.After(transport.PingInterval):
+			err := sess.WritePing()
+			if err != nil {
+				return err
+			}
+
+		case frm, ok := <-sess.Inbox():
+			if !ok {
+				return sess.Error()
+			}
+			if slices.Contains(transport.TagEvents(), frm.Tag) {
+				event, err := unmarshalEvent(frm)
+				if err != nil {
+					return err
+				}
+				sess.events <- event
+				continue
+			}
+			switch frm.Tag {
+			case transport.TagPing:
+				sess.ResetPingDeadline()
+			default:
+				slog.Warn("unexpected tag", "tag", frm.Tag)
+			}
 		}
+	}
+}
 
-		t := time.Now().Add(100 * time.Millisecond)
-		err := sess.conn.SetDeadline(t)
-		if err != nil {
-			slog.Error("failed to set deadline", "error", err)
-			break
-		}
+func unmarshalEvent(frm transport.Frame) (any, error) {
+	var event any
+	var err error
 
-		tag, err := transport.ReadTag(reader)
-		if err != nil {
-			slog.Error("failed to read tag", "error", err)
-			break
-		}
+	switch frm.Tag {
+	case transport.TagEventMouseMove:
+		event, err = unmarshal[inputevent.MouseMove](frm.Value)
 
-		length, err := transport.ReadLength(reader)
-		if err != nil {
-			slog.Error("failed to read length", "error", err)
-			break
-		}
+	case transport.TagEventMouseClick:
+		event, err = unmarshal[inputevent.MouseClick](frm.Value)
 
-		valueBytes := make([]byte, length)
-		_, err = io.ReadFull(reader, valueBytes)
-		if err != nil {
-			slog.Error("failed to read value bytes", "error", err)
-			break
-		}
+	case transport.TagEventMouseScroll:
+		event, err = unmarshal[inputevent.MouseScroll](frm.Value)
 
-		if length > transport.MaxLength {
-			slog.Warn("length is larger than maximum length", "length", length, "maximum_length", transport.MaxLength)
-			continue loop
-		}
+	case transport.TagEventKeyPress:
+		event, err = unmarshal[inputevent.KeyPress](frm.Value)
 
-		var value any
-
-		switch tag {
-
-		case transport.TagMouseMoveEvent:
-			value, err = unmarshal[inputevent.MouseMove](valueBytes)
-
-		case transport.TagMouseClickEvent:
-			value, err = unmarshal[inputevent.MouseClick](valueBytes)
-
-		case transport.TagMouseScrollEvent:
-			value, err = unmarshal[inputevent.MouseScroll](valueBytes)
-
-		case transport.TagKeyPressEvent:
-			value, err = unmarshal[inputevent.KeyPress](valueBytes)
-
-		default:
-			slog.Warn("unexpected tag", "tag", tag)
-			continue loop
-		}
-
-		if err != nil {
-			slog.Warn("failed to unmarshal value", "error", err)
-			continue loop
-		}
-
-		sess.events <- value
+	default:
+		return nil, errors.New("unexpected tag")
 	}
 
-	return nil
+	return event, err
 }
 
 func unmarshal[T any](r cbor.RawMessage) (T, error) {

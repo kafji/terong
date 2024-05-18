@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -6,7 +8,6 @@ import (
 	"log/slog"
 
 	"kafji.net/terong/console"
-	"kafji.net/terong/terong"
 	"kafji.net/terong/terong/server"
 )
 
@@ -15,7 +16,8 @@ func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
 	ctx := context.Background()
-	args := terong.ParseArgs()
-	err := server.Start(ctx, args)
-	slog.Error("server error", "error", err)
+	err := server.Start(ctx)
+	if err != nil {
+		log.Fatalln(err)
+	}
 }

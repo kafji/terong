@@ -1,3 +1,5 @@
+//go:build windows
+
 package server
 
 import (
@@ -9,14 +11,14 @@ import (
 	"kafji.net/terong/inputevent"
 	"kafji.net/terong/inputsource"
 	"kafji.net/terong/logging"
-	"kafji.net/terong/terong"
+	"kafji.net/terong/terong/config"
 	"kafji.net/terong/transport/server"
 )
 
 var slog = logging.New("terong/server")
 
-func Start(ctx context.Context, args terong.Args) error {
-	cfg, err := terong.ReadConfig(args.ConfigFile)
+func Start(ctx context.Context) error {
+	cfg, err := config.ReadConfig()
 	if err != nil {
 		return err
 	}
@@ -25,7 +27,7 @@ func Start(ctx context.Context, args terong.Args) error {
 	defer source.Stop()
 
 	events := make(chan any)
-	transport := server.Start(ctx, fmt.Sprintf(":%d", cfg.Port), events)
+	transport := server.Start(ctx, fmt.Sprintf(":%d", cfg.Server.Port), events)
 
 	relay := false
 	toggledAt := time.Time{}
