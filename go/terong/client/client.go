@@ -63,12 +63,8 @@ func startApp(ctx context.Context, cfg config.Config) *app {
 	go func() {
 		slog.Info("starting app", "config", a.cfg)
 
-		transportEvents := make(chan any)
-		transportError := make(chan error)
-		go func() {
-			err := client.Start(ctx, a.cfg.Client.ServerAddr, transportEvents)
-			transportError <- err
-		}()
+		events := make(chan any)
+		transport := client.Start(ctx, a.cfg.Client.ServerAddr, events)
 
 		sinkInputs := make(chan any)
 		sinkError := make(chan error)
@@ -85,7 +81,7 @@ func startApp(ctx context.Context, cfg config.Config) *app {
 				a.done_ <- ctx.Err()
 				return
 
-			case err := <-transportError:
+			case err := <-transport:
 				a.done_ <- err
 				return
 
@@ -93,7 +89,7 @@ func startApp(ctx context.Context, cfg config.Config) *app {
 				a.done_ <- err
 				return
 
-			case event := <-transportEvents:
+			case event := <-events:
 				slog.Debug("event", "event", event)
 				sinkInputs <- event
 			}
