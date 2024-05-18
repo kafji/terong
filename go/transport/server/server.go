@@ -43,7 +43,6 @@ func run(ctx context.Context, addr string, events <-chan any) error {
 			if !ok {
 				return receptionist.error()
 			}
-			slog.Info("connected to client", "address", conn.RemoteAddr())
 			if !sess.Closed() {
 				slog.Info("rejecting connection, active session exists", "address", conn.RemoteAddr())
 				err := conn.Close()
@@ -84,7 +83,8 @@ type receptionist struct {
 }
 
 func newReceptionist(listener net.Listener) *receptionist {
-	r := &receptionist{listener: listener}
+	r := &receptionist{listener: listener, conns_: make(chan net.Conn)}
+
 	go func() {
 		defer close(r.conns_)
 		for {
@@ -95,9 +95,11 @@ func newReceptionist(listener net.Listener) *receptionist {
 				r.err = fmt.Errorf("failed to accept connection: %v", err)
 				return
 			}
+			slog.Info("connected to client", "address", conn.RemoteAddr())
 			r.conns_ <- conn
 		}
 	}()
+
 	return r
 }
 
