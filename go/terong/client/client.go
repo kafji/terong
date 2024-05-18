@@ -25,6 +25,7 @@ restart:
 
 	appCtx, cancelApp := context.WithCancel(ctx)
 	app := startApp(appCtx, cfg)
+	defer cancelApp()
 
 	for {
 		select {
@@ -33,9 +34,7 @@ restart:
 			return
 
 		case err := <-app.done():
-			if err != nil {
-				slog.Error("app error", "error", err)
-			}
+			slog.Error("app error", "error", err)
 			return
 
 		case _, ok := <-watcher.Changed():
@@ -58,9 +57,9 @@ type app struct {
 func startApp(ctx context.Context, cfg config.Config) *app {
 	a := &app{cfg: cfg, done_: make(chan error)}
 
-	defer close(a.done_)
-
 	go func() {
+		defer close(a.done_)
+
 		slog.Info("starting app", "config", a.cfg)
 
 		events := make(chan any)
@@ -70,9 +69,7 @@ func startApp(ctx context.Context, cfg config.Config) *app {
 		sinkError := make(chan error)
 		go func() {
 			err := inputsink.Start(ctx, sinkInputs)
-			if err != nil {
-				sinkError <- err
-			}
+			sinkError <- err
 		}()
 
 		for {

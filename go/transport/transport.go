@@ -20,6 +20,8 @@ const PingTimeout = 10 * time.Second
 
 const PingInterval = PingTimeout / 2
 
+const ConnectTimeout = 5 * time.Second
+
 const ReconnectDelay = 5 * time.Second
 
 var ErrMaxLengthExceeded = errors.New("frame length is larger than maximum value length")

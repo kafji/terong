@@ -19,10 +19,11 @@ var slog = logging.NewLogger("transport/client")
 func Start(ctx context.Context, addr string, events chan<- any) <-chan error {
 	done := make(chan error)
 
+	dialer := &net.Dialer{Timeout: transport.ConnectTimeout}
 	go func() {
 		for {
 			slog.Info("connecting to server", "address", addr)
-			conn, err := net.Dial("tcp", addr)
+			conn, err := dialer.DialContext(ctx, "tcp4", addr)
 			if err != nil {
 				slog.Error("failed to connect to server", "address", addr)
 			} else {
@@ -64,10 +65,8 @@ func runSession(ctx context.Context, sess *transport.Session, events chan<- any)
 			case <-time.After(transport.PingInterval):
 				slog.Debug("sending ping")
 				err := sess.WritePing()
-				if err != nil {
-					done <- err
-					return
-				}
+				done <- err
+				return
 
 			case <-sess.PingDeadline():
 				done <- errors.New("server ping deadline exceeded")
