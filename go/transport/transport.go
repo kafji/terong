@@ -14,55 +14,43 @@ import (
 
 var slog = logging.NewLogger("transport")
 
-const MaxLength = 2 /* sizeof tag */ + 2 /* sizeof length */ + 1020 /* sizeof value */
+const ValueMaxLength = 1024 - 2 /* tag */ - 2 /* length */
+// ValueMaxLength can fit in uint16.
+const _ uint16 = ValueMaxLength
 
-const PingTimeout = 10 * time.Second
-
-const PingInterval = PingTimeout / 2
-
+const PingTimeout = PingInterval + 1*time.Second
+const PingInterval = 5 * time.Second
 const ConnectTimeout = 5 * time.Second
-
 const ReconnectDelay = 5 * time.Second
+const WriteTimeout = 100 * time.Millisecond
 
-var ErrMaxLengthExceeded = errors.New("frame length is larger than maximum value length")
+var ErrMaxLengthExceeded = errors.New("length is larger than the maximum length")
+var ErrPingTimedOut = errors.New("ping timed out")
 
 type Tag uint16
 
 const (
-	tagEventMinorant Tag = iota + 1
-	TagEventMouseMove
-	TagEventMouseClick
-	TagEventMouseScroll
-	TagEventKeyPress
-	tagEventMajorant
+	TagMouseMove Tag = iota + 1
+	TagMouseClick
+	TagMouseScroll
+	TagKeyPress
 
 	TagPing
-)
 
-var TagEvents = sync.OnceValue(func() []Tag {
-	tags := make([]Tag, 0)
-	for i := tagEventMinorant + 1; i < tagEventMajorant; i++ {
-		tags = append(tags, i)
-	}
-	return tags
-})
+	TagClose
+)
 
 func TagFor(v any) (Tag, error) {
 	switch v.(type) {
-
 	case inputevent.MouseMove:
-		return TagEventMouseMove, nil
-
+		return TagMouseMove, nil
 	case inputevent.MouseClick:
-		return TagEventMouseClick, nil
-
+		return TagMouseClick, nil
 	case inputevent.MouseScroll:
-		return TagEventMouseScroll, nil
-
+		return TagMouseScroll, nil
 	case inputevent.KeyPress:
-		return TagEventKeyPress, nil
+		return TagKeyPress, nil
 	}
-
 	return 0, errors.New("unexpected type")
 }
 
@@ -139,7 +127,7 @@ func ReadFrame(r io.Reader) (Frame, error) {
 		return Frame{}, fmt.Errorf("failed to read value: %v", err)
 	}
 
-	if length > MaxLength {
+	if length > ValueMaxLength {
 		err = ErrMaxLengthExceeded
 	}
 
@@ -147,14 +135,16 @@ func ReadFrame(r io.Reader) (Frame, error) {
 }
 
 type Session struct {
-	Conn net.Conn
+	conn net.Conn
 
-	mu           sync.Mutex
-	closed       bool
-	inboxErr     error
-	pingDeadline chan struct{}
+	mu     sync.Mutex
+	closed bool
 
-	inbox chan Frame
+	sendPingDeadline chan struct{}
+	recvPingDeadline chan struct{}
+
+	inbox    chan Frame
+	inboxErr error
 }
 
 func EmptySession() *Session {
@@ -162,15 +152,13 @@ func EmptySession() *Session {
 }
 
 func NewSession(conn net.Conn) *Session {
-	s := &Session{Conn: conn, inbox: make(chan Frame)}
+	s := &Session{conn: conn, inbox: make(chan Frame)}
 
 	go func() {
 		defer close(s.inbox)
 		for {
 			frm, err := s.ReadFrame()
 			if err != nil {
-				s.mu.Lock()
-				defer s.mu.Unlock()
 				s.inboxErr = err
 				return
 			}
@@ -186,48 +174,73 @@ func (s *Session) Inbox() <-chan Frame {
 }
 
 func (s *Session) InboxErr() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	return s.inboxErr
 }
 
-func (s *Session) ResetPingDeadline() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Session) ResetSendPingDeadline() {
+	ch := make(chan struct{}, 1)
+	go func() {
+		time.After(time.Until(time.Now().Add(PingInterval)))
+		ch <- struct{}{}
+	}()
+	s.sendPingDeadline = ch
+}
+
+func (s *Session) SendPingDeadline() <-chan struct{} {
+	return s.sendPingDeadline
+}
+
+func (s *Session) ResetRecvPingDeadline() {
 	ch := make(chan struct{}, 1)
 	go func() {
 		time.After(time.Until(time.Now().Add(PingTimeout)))
 		ch <- struct{}{}
 	}()
-	s.pingDeadline = ch
+	s.recvPingDeadline = ch
 }
 
-func (s *Session) PingDeadline() <-chan struct{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.pingDeadline
+func (s *Session) RecvPingDeadline() <-chan struct{} {
+	return s.recvPingDeadline
 }
 
 func (s *Session) WriteFrame(frm Frame) error {
-	t := time.Now().Add(100 * time.Millisecond)
-	err := s.Conn.SetWriteDeadline(t)
+	t := time.Now().Add(WriteTimeout)
+	err := s.conn.SetWriteDeadline(t)
 	if err != err {
 		return fmt.Errorf("failed to set write deadline: %v", err)
 	}
-	return WriteFrame(s.Conn, frm)
+	return WriteFrame(s.conn, frm)
 }
 
 func (s *Session) WritePing() error {
 	frm := Frame{Tag: TagPing, Length: 0}
-	err := s.WriteFrame(frm)
-	return fmt.Errorf("failed to write ping: %v", err)
+	return s.WriteFrame(frm)
 }
 
 func (s *Session) ReadFrame() (Frame, error) {
-	return ReadFrame(s.Conn)
+	return ReadFrame(s.conn)
 }
 
-func (s *Session) Close() {
+func (s *Session) SendPing() error {
+	if err := s.WritePing(); err != nil {
+		return err
+	}
+	s.ResetSendPingDeadline()
+	return nil
+}
+
+func (s *Session) writeCloseFrame(reason string) error {
+	value := []byte(reason)
+	length := len(value)
+	if length > ValueMaxLength {
+		length = ValueMaxLength
+		slog.Warn("reason is longer than maximum value length")
+	}
+	frm := Frame{Tag: TagClose, Length: uint16(length), Value: value[:length]}
+	return s.WriteFrame(frm)
+}
+
+func (s *Session) Close(reason string) {
 	if s.closed {
 		return
 	}
@@ -237,13 +250,20 @@ func (s *Session) Close() {
 		return
 	}
 	s.closed = true
-	err := s.Conn.Close()
+
+	slog.Debug("sending close frame")
+	err := s.writeCloseFrame(reason)
+	if err != nil {
+		slog.Warn("failed to write close frame", "error", err)
+	}
+
+	err = s.conn.Close()
 	if err != nil {
 		slog.Warn(
 			"failed to close connection",
 			"error", err,
-			"local_addr", s.Conn.LocalAddr(),
-			"remote_addr", s.Conn.RemoteAddr(),
+			"local_addr", s.conn.LocalAddr(),
+			"remote_addr", s.conn.RemoteAddr(),
 		)
 	}
 }

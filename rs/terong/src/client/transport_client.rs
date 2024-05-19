@@ -35,20 +35,17 @@ type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMess
 #[derive(Debug)]
 pub struct TransportClient {
     pub server_addr: SocketAddr,
-
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
-
     pub server_tls_certs: Vec<Certificate>,
-
     pub event_tx: mpsc::Sender<InputEvent>,
 }
 
 pub fn start(args: TransportClient) -> JoinHandle<()> {
-    task::spawn(async move { run_transport_client(args).await })
+    task::spawn(run_transport(args))
 }
 
-async fn run_transport_client(args: TransportClient) {
+async fn run_transport(args: TransportClient) {
     let TransportClient {
         server_addr,
         event_tx,

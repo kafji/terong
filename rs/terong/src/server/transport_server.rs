@@ -29,20 +29,17 @@ type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMess
 #[derive(Debug)]
 pub struct TransportServer {
     pub port: u16,
-
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
-
-    pub event_rx: mpsc::Receiver<InputEvent>,
-
     pub client_tls_certs: Vec<Certificate>,
+    pub event_rx: mpsc::Receiver<InputEvent>,
 }
 
 pub fn start(args: TransportServer) -> JoinHandle<()> {
-    task::spawn(async move { run(args).await })
+    task::spawn(run_transport(args))
 }
 
-async fn run(args: TransportServer) {
+async fn run_transport(args: TransportServer) {
     let TransportServer {
         port,
         tls_certs,
@@ -77,19 +74,19 @@ async fn run(args: TransportServer) {
             .unwrap_or_else(|| future::pending().boxed());
 
         select! { biased;
-            // check if session is finished if it's exist
+            // check if session is finished if it exists
             Ok(()) = finished => {
                 session_handler.take();
             }
 
-            // propagate to session if it's exist
+            // propagate to session if it exists
             event = event_rx.recv() => {
                 match (event, &mut session_handler) {
                     // propagate event to session
                     (Some(event), Some(session)) if session.is_connected() => { session.send_event(event).await.ok(); },
                     // stop server if channel is closed
                     (None, _) => break,
-                    // drop event if we didn't have connected session
+                    // drop event if we didn't have active session
                     _ => (),
                 }
             }
@@ -155,13 +152,9 @@ impl SessionHandler {
 
 struct Session {
     tls_config: Arc<ServerConfig>,
-
     peer_addr: SocketAddr,
-
     transporter: ServerTransporter,
-
     event_rx: mpsc::Receiver<InputEvent>,
-
     state: Arc<Mutex<SessionState>>,
 }
 

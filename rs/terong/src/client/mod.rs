@@ -12,7 +12,7 @@ use anyhow::Error;
 use tokio::sync::mpsc;
 use tracing::info;
 
-async fn start_client_app(cfg: ClientConfig) -> Result<(), Error> {
+async fn start_app(cfg: ClientConfig) -> Result<(), Error> {
     info!(?cfg, "starting client app");
 
     let ClientConfig {
@@ -64,5 +64,5 @@ pub async fn run() {
 
     let cfg = Config::get().await.client();
 
-    start_client_app(cfg).await.unwrap();
+    start_app(cfg).await.unwrap();
 }

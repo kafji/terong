@@ -1,92 +1,84 @@
-//go:build linux
-
 package config
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"sync"
-	"unsafe"
 
-	"golang.org/x/sys/unix"
-	"kafji.net/terong/logging"
+	"github.com/fsnotify/fsnotify"
 )
 
-var slog = logging.NewLogger("config")
-
 type Watcher struct {
-	mu  sync.Mutex
-	err error
-
-	changed chan struct{}
+	cfgs chan Config
+	err  error
 }
 
-func (w *Watcher) Changed() <-chan struct{} {
-	return w.changed
+func (w *Watcher) Configs() <-chan Config {
+	return w.cfgs
 }
 
-func (w *Watcher) Error() error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+func (w *Watcher) Err() error {
 	return w.err
 }
 
 func Watch(ctx context.Context) *Watcher {
-	w := &Watcher{changed: make(chan struct{})}
+	w := &Watcher{cfgs: make(chan Config)}
 
 	go func() {
-		defer close(w.changed)
+		defer close(w.cfgs)
 
-		fd, err := unix.InotifyInit()
+		watcher, err := createWatcher()
 		if err != nil {
-			w.mu.Lock()
-			defer w.mu.Unlock()
-			w.err = fmt.Errorf("failed to initialize inotify: %v", err)
+			w.err = fmt.Errorf("failed to create file watcher: %v", err)
 			return
 		}
-
-		f := os.NewFile(uintptr(fd), filePath)
-		defer f.Close()
-
-		slog.Info("watching for changes", "path", filePath)
-		wd, err := unix.InotifyAddWatch(fd, filePath, unix.IN_CLOSE_WRITE)
-		if err != nil {
-			w.mu.Lock()
-			defer w.mu.Unlock()
-			w.err = fmt.Errorf("failed to add config file to watch list: %v", err)
-			return
-		}
-		defer unix.InotifyRmWatch(fd, uint32(wd))
+		defer watcher.Close()
 
 		for {
 			select {
 			case <-ctx.Done():
-				w.mu.Lock()
-				defer w.mu.Unlock()
-				w.err = fmt.Errorf("cancelled: %v", err)
+				err := ctx.Err()
+				slog.Debug("context error", "error", err)
+				w.err = err
 				return
-			default:
-			}
 
-			buf := make([]byte, unix.SizeofInotifyEvent+unix.NAME_MAX+1)
-			n, err := f.Read(buf)
-			if n == 0 && err != nil {
-				w.mu.Lock()
-				defer w.mu.Unlock()
-				w.err = fmt.Errorf("failed to read inotify event: %v", err)
-				return
+			case event, ok := <-watcher.Events:
+				if !ok {
+					slog.Debug("watcher events closed")
+					select {
+					case err := <-watcher.Errors:
+						w.err = err
+					default:
+					}
+					return
+				}
+				slog.Debug("watcher event", "event", event)
+				if !event.Op.Has(fsnotify.Write) || event.Name != "terong.toml" {
+					continue
+				}
+				slog.Debug("reading config")
+				cfg, err := ReadConfig()
+				if err != nil {
+					slog.Warn("failed to read config", "error", err)
+					continue
+				}
+				slog.Debug("sending config")
+				w.cfgs <- cfg
 			}
-			buf = buf[:n]
-
-			event := (*unix.InotifyEvent)(unsafe.Pointer(&buf[0]))
-			if event.Mask != unix.IN_CLOSE_WRITE {
-				continue
-			}
-			slog.Debug("event", "event", event)
-			w.changed <- struct{}{}
 		}
 	}()
 
 	return w
+}
+
+func createWatcher() (*fsnotify.Watcher, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	err = watcher.Add(".\\terong.toml")
+	if err != nil {
+		return nil, err
+	}
+
+	return watcher, nil
 }

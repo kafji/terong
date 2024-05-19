@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"kafji.net/terong/inputevent"
 	"kafji.net/terong/inputsource"
 	"kafji.net/terong/logging"
@@ -18,16 +19,55 @@ import (
 var slog = logging.NewLogger("terong/server")
 
 func Start(ctx context.Context) {
+	console, err := disableQuickEdit()
+	if err != nil {
+		slog.Error("failed to disable quick edit", "error", err)
+		return
+	}
+	defer console.restore()
+
 	cfg, err := config.ReadConfig()
 	if err != nil {
 		slog.Error("failed to read config file", "error", err)
 		return
 	}
 
+	watcher := config.Watch(ctx)
+
+restart:
+	logging.SetLogLevel(cfg.LogLevel)
+
+	slog.Info("starting server", "config", cfg)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	go run(runCtx, cfg)
+	defer cancelRun()
+
+	var ok bool
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Error("context error", "error", err)
+			return
+
+		case cfg, ok = <-watcher.Configs():
+			if !ok {
+				slog.Error("config watcher error", "error", watcher.Err())
+				return
+			}
+			slog.Info("configurations changed", "config", cfg)
+			cancelRun()
+			goto restart
+		}
+	}
+}
+
+func run(ctx context.Context, cfg config.Config) {
 	source := inputsource.Start()
 	defer source.Stop()
 
-	events := make(chan any, 1)
+	events := make(chan inputevent.InputEvent)
+	defer close(events)
+
 	transport := server.Start(ctx, fmt.Sprintf(":%d", cfg.Server.Port), events)
 
 	relay := false
@@ -41,7 +81,7 @@ func Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Error("cancelled", "error", err)
+			slog.Error("context error", "error", ctx.Err())
 			return
 
 		case input, ok := <-source.Inputs():
@@ -49,7 +89,6 @@ func Start(ctx context.Context) {
 				slog.Error("input source stopped", "error", source.Error())
 				return
 			}
-
 			slog.Debug("input received", "input", input)
 			if relay {
 				events <- input
@@ -121,4 +160,38 @@ func (b *keyBuffer) toggleKeyStrokeExists(after time.Time) (bool, time.Time) {
 		}
 	}
 	return false, time.Time{}
+}
+
+type console struct {
+	handle  windows.Handle
+	oldMode uint32
+}
+
+func disableQuickEdit() (console, error) {
+	handle, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
+	if err != nil {
+		return console{}, fmt.Errorf("failed to get handle: %v", err)
+	}
+
+	var mode uint32
+	err = windows.GetConsoleMode(handle, &mode)
+	if err != nil {
+		return console{}, fmt.Errorf("failed to get mode: %v", err)
+	}
+
+	newMode := mode & ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
+	err = windows.SetConsoleMode(handle, newMode)
+	if err != nil {
+		return console{}, fmt.Errorf("failed to set new mode: %v", err)
+	}
+
+	return console{handle: handle, oldMode: mode}, nil
+}
+
+func (c console) restore() error {
+	err := windows.SetConsoleMode(c.handle, c.oldMode)
+	if err != nil {
+		return fmt.Errorf("failed to set mode: %v", err)
+	}
+	return nil
 }

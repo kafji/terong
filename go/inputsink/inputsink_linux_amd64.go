@@ -2,7 +2,7 @@ package inputsink
 
 /*
 #cgo pkg-config: libevdev
-#cgo CFLAGS: -O2
+#cgo CFLAGS: -Wall -g -O2
 #include <stdlib.h>
 #include <string.h>
 #include <libevdev/libevdev.h>

@@ -4,7 +4,10 @@ import (
 	"os"
 
 	"github.com/BurntSushi/toml"
+	"kafji.net/terong/logging"
 )
+
+var slog = logging.NewLogger("config")
 
 const filePath = "./terong.toml"
 
@@ -15,11 +18,17 @@ type Config struct {
 }
 
 type Server struct {
-	Port uint16 `toml:"port"`
+	Port              uint16 `toml:"port"`
+	TLSCertPath       string `toml:"tls_cert_path"`
+	TLSKeyPath        string `toml:"tls_key_path"`
+	ClientTLSCertPath string `toml:"client_tls_cert_path"`
 }
 
 type Client struct {
-	ServerAddr string `toml:"server_addr"`
+	ServerAddr        string `toml:"server_addr"`
+	TLSCertPath       string `toml:"tls_cert_path"`
+	TLSKeyPath        string `toml:"tls_key_path"`
+	ServerTLSCertPath string `toml:"server_tls_cert_path"`
 }
 
 func ReadConfig() (Config, error) {

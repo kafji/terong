@@ -1,7 +1,7 @@
 package inputsource
 
 /*
-#cgo CFLAGS: -O2
+#cgo CFLAGS: -Wall -g -O2
 #include <windows.h>
 #include "hook_windows_amd64.h"
 */
@@ -25,12 +25,12 @@ type Handle struct {
 	stopped  bool
 	err      error
 
-	inputs           chan any
+	inputs           chan inputevent.InputEvent
 	captureMouseMove bool
 }
 
 func Start() *Handle {
-	h := &Handle{inputs: make(chan any, 1_000)}
+	h := &Handle{inputs: make(chan inputevent.InputEvent, 1_000)}
 	go func() {
 		err := run(h)
 		h.mu.Lock()
@@ -42,7 +42,7 @@ func Start() *Handle {
 	return h
 }
 
-func (h *Handle) Inputs() <-chan any {
+func (h *Handle) Inputs() <-chan inputevent.InputEvent {
 	return h.inputs
 }
 
@@ -198,7 +198,7 @@ loop:
 		var msg C.MSG
 		ret := C.get_message(&msg)
 		if ret == 0 {
-			break
+			break loop
 		}
 		if ret < 0 {
 			return windows.GetLastError()
@@ -209,7 +209,7 @@ loop:
 		switch msg.message {
 		case C.MESSAGE_CODE_HOOK_EVENT:
 			hookEvent := C.get_hook_event()
-			var input any
+			var input inputevent.InputEvent
 			switch msg.wParam {
 			case C.WH_MOUSE_LL:
 				switch hookEvent.code {

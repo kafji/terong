@@ -5,6 +5,7 @@ package client
 import (
 	"context"
 
+	"kafji.net/terong/inputevent"
 	"kafji.net/terong/inputsink"
 	"kafji.net/terong/logging"
 	"kafji.net/terong/terong/config"
@@ -14,88 +15,73 @@ import (
 var slog = logging.NewLogger("terong/client")
 
 func Start(ctx context.Context) {
-	watcher := config.Watch(ctx)
-
-restart:
 	cfg, err := config.ReadConfig()
 	if err != nil {
-		slog.Error("failed to read config", "error", err)
+		slog.Error("failed to read config file", "error", err)
 		return
 	}
 
-	appCtx, cancelApp := context.WithCancel(ctx)
-	app := startApp(appCtx, cfg)
-	defer cancelApp()
+	watcher := config.Watch(ctx)
 
+restart:
+	logging.SetLogLevel(cfg.LogLevel)
+
+	slog.Info("starting client", "config", cfg)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	go run(runCtx, cfg)
+	defer cancelRun()
+
+	var ok bool
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Error("cancelled", "error", err)
+			slog.Error("context error", "error", err)
 			return
 
-		case err := <-app.done():
-			slog.Error("app error", "error", err)
-			return
-
-		case _, ok := <-watcher.Changed():
+		case cfg, ok = <-watcher.Changes():
 			if !ok {
-				slog.Error("watcher error", "error", watcher.Error())
+				slog.Error("config watcher error", "error", watcher.Err())
 				return
 			}
-			slog.Info("config changed")
-			cancelApp()
+			slog.Info("configurations changed", "config", cfg)
+			cancelRun()
 			goto restart
 		}
 	}
 }
 
-type app struct {
-	cfg   config.Config
-	done_ chan error
-}
+func run(ctx context.Context, cfg config.Config) {
+	slog.Info("starting app", "config", cfg)
 
-func startApp(ctx context.Context, cfg config.Config) *app {
-	a := &app{cfg: cfg, done_: make(chan error)}
+	inputs := make(chan inputevent.InputEvent)
+	defer close(inputs)
 
+	transport := client.Start(ctx, cfg.Client.ServerAddr)
+
+	sinkInputs := make(chan any)
+	sinkError := make(chan error)
 	go func() {
-		defer close(a.done_)
-
-		slog.Info("starting app", "config", a.cfg)
-
-		events := make(chan any)
-		transport := client.Start(ctx, a.cfg.Client.ServerAddr, events)
-
-		sinkInputs := make(chan any)
-		sinkError := make(chan error)
-		go func() {
-			err := inputsink.Start(ctx, sinkInputs)
-			sinkError <- err
-		}()
-
-		for {
-			select {
-			case <-ctx.Done():
-				a.done_ <- ctx.Err()
-				return
-
-			case err := <-transport:
-				a.done_ <- err
-				return
-
-			case err := <-sinkError:
-				a.done_ <- err
-				return
-
-			case event := <-events:
-				slog.Debug("event", "event", event)
-				sinkInputs <- event
-			}
-		}
+		err := inputsink.Start(ctx, sinkInputs)
+		sinkError <- err
 	}()
 
-	return a
-}
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Error("context error", "error", ctx.Err())
+			return
 
-func (a *app) done() <-chan error {
-	return a.done_
+		case err := <-sinkError:
+			slog.Error("sink error", "error", err)
+			return
+
+		case input, ok := <-transport.Inputs():
+			if !ok {
+				slog.Error("transport error", "error", transport.Err())
+				return
+			}
+			slog.Debug("input received", "input", input)
+			sinkInputs <- input
+		}
+	}
 }

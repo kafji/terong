@@ -1,5 +1,21 @@
 package inputevent
 
+import "sync"
+
+type InputEvent interface {
+	inputEvent()
+}
+
+func (MouseMove) inputEvent()   {}
+func (MouseClick) inputEvent()  {}
+func (MouseScroll) inputEvent() {}
+func (KeyPress) inputEvent()    {}
+
+var _ InputEvent = MouseMove{}
+var _ InputEvent = MouseClick{}
+var _ InputEvent = MouseScroll{}
+var _ InputEvent = KeyPress{}
+
 // mouse
 
 type MouseMove struct {
@@ -29,13 +45,13 @@ const (
 	mouseButtonMajorant
 )
 
-func MouseButtons() []MouseButton {
+var MouseButtons = sync.OnceValue(func() []MouseButton {
 	xs := make([]MouseButton, 0)
 	for i := mouseButtonMinorant + 1; i < mouseButtonMajorant; i++ {
 		xs = append(xs, i)
 	}
 	return xs
-}
+})
 
 type MouseButtonAction uint8
 
@@ -69,9 +85,7 @@ const (
 type KeyCode uint16
 
 const (
-	keyCodeMinorant KeyCode = iota
-
-	Escape
+	Escape KeyCode = iota + 1
 
 	// function keys
 
@@ -182,23 +196,21 @@ const (
 	Left
 	Down
 	Right
-
-	keyCodeMajorant
 )
 
-func KeyCodes() []KeyCode {
+var KeyCodes = sync.OnceValue(func() []KeyCode {
 	xs := make([]KeyCode, 0)
-	for i := keyCodeMinorant + 1; i < keyCodeMajorant; i++ {
+	for i := Escape; i <= Right; i++ {
 		xs = append(xs, i)
 	}
 	return xs
-}
+})
 
 type Normalizer struct {
-	prev any
+	prev InputEvent
 }
 
-func (n *Normalizer) Normalize(event any) any {
+func (n *Normalizer) Normalize(event InputEvent) InputEvent {
 	prev, ok := n.prev.(KeyPress)
 	if !ok || prev.Action != KeyActionDown {
 		n.prev = event

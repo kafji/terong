@@ -5,7 +5,7 @@ import (
 	"log/slog"
 )
 
-var Filter func(namespace string) bool = func(namespace string) bool { return true }
+var Filter = func(namespace string) bool { return true }
 
 type Logger interface {
 	Debug(msg string, args ...any)
@@ -59,4 +59,17 @@ func (l *logger) Error(msg string, args ...any) {
 		return
 	}
 	slog.Error(msg, args...)
+}
+
+func SetLogLevel(level string) {
+	switch level {
+	case "debug":
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	case "warn":
+		slog.SetLogLoggerLevel(slog.LevelWarn)
+	case "error":
+		slog.SetLogLoggerLevel(slog.LevelError)
+	default:
+		slog.SetLogLoggerLevel(slog.LevelInfo)
+	}
 }

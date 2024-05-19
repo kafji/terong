@@ -5,43 +5,45 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sync"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"kafji.net/terong/inputevent"
 	"kafji.net/terong/logging"
 	"kafji.net/terong/transport"
 )
 
 var slog = logging.NewLogger("transport/server")
 
-func Start(ctx context.Context, addr string, events <-chan any) <-chan error {
+func Start(ctx context.Context, addr string, inputs <-chan inputevent.InputEvent) <-chan error {
 	done := make(chan error)
 	go func() {
-		err := run(ctx, addr, events)
+		err := run(ctx, addr, inputs)
 		done <- err
 	}()
 	return done
 }
 
-func run(ctx context.Context, addr string, events <-chan any) error {
+func run(ctx context.Context, addr string, inputs <-chan inputevent.InputEvent) error {
 	slog.Info("listening for connection", "address", addr)
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", addr)
 	if err != nil {
-		return errors.Join(errors.New("failed to listen"), err)
+		return fmt.Errorf("failed to listen: %v", err)
 	}
 	defer listener.Close()
 
 	receptionist := newReceptionist(listener)
 
 	sess := &session{Session: transport.EmptySession()}
-	defer sess.Close()
+	defer sess.Close("server shutting down")
 
 	for {
 		select {
-		case conn, ok := <-receptionist.conns():
+		case <-ctx.Done():
+			return ctx.Err()
+
+		case conn, ok := <-receptionist.conns:
 			if !ok {
-				return receptionist.error()
+				return receptionist.err
 			}
 			if !sess.Closed() {
 				slog.Info("rejecting connection, active session exists", "address", conn.RemoteAddr())
@@ -51,23 +53,24 @@ func run(ctx context.Context, addr string, events <-chan any) error {
 				}
 				continue
 			}
-			sess = &session{Session: transport.NewSession(conn)}
+			sess = newSession(conn)
 			slog.Info("session established", "address", conn.RemoteAddr())
 			runSession(ctx, sess)
 
-		case event := <-events:
-			if sess.Closed() {
-				continue
-			}
-			slog.Debug("sending event", "event", event)
-			if err := sess.writeEvent(event); err != nil {
-				slog.Error("failed to write event", "error", err)
-				sess.Close()
+		case input := <-inputs:
+			select {
+			case sess.inputs <- input:
+			default:
 			}
 
-		case err := <-sess.done():
+		case err := <-sess.done:
 			slog.Error("session error", "error", err)
-			sess.Close()
+			switch {
+			case errors.Is(err, transport.ErrPingTimedOut):
+				sess.Close(err.Error())
+			default:
+				sess.Close("")
+			}
 		}
 	}
 }
@@ -75,107 +78,108 @@ func run(ctx context.Context, addr string, events <-chan any) error {
 // receptionist handles incoming connections.
 type receptionist struct {
 	listener net.Listener
-
-	mu  sync.Mutex
-	err error
-
-	conns_ chan net.Conn
+	conns    chan net.Conn
+	err      error
 }
 
 func newReceptionist(listener net.Listener) *receptionist {
-	r := &receptionist{listener: listener, conns_: make(chan net.Conn)}
+	r := &receptionist{
+		listener: listener,
+		conns:    make(chan net.Conn),
+	}
 
 	go func() {
-		defer close(r.conns_)
+		defer close(r.conns)
+
 		for {
 			conn, err := r.listener.Accept()
 			if err != nil {
-				r.mu.Lock()
-				defer r.mu.Unlock()
 				r.err = fmt.Errorf("failed to accept connection: %v", err)
 				return
 			}
 			slog.Info("connected to client", "address", conn.RemoteAddr())
-			r.conns_ <- conn
+			r.conns <- conn
 		}
 	}()
 
 	return r
 }
 
-func (r *receptionist) conns() <-chan net.Conn {
-	return r.conns_
-}
-
-func (r *receptionist) error() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.err
-}
-
 type session struct {
 	*transport.Session
-	done_ chan error
+	inputs chan inputevent.InputEvent
+	done   chan error
 }
 
-func (s *session) writeEvent(event any) error {
-	value, err := cbor.Marshal(&event)
+func newSession(conn net.Conn) *session {
+	s := &session{
+		Session: transport.NewSession(conn),
+		inputs:  make(chan inputevent.InputEvent, 1),
+		done:    make(chan error),
+	}
+	return s
+}
+
+func (s *session) writeInput(input inputevent.InputEvent) error {
+	value, err := cbor.Marshal(&input)
 	if err != nil {
-		return errors.Join(errors.New("failed to marshal value"), err)
+		return fmt.Errorf("failed to marshal value: %v", err)
 	}
 
 	lengthInt := len(value)
-	if lengthInt > transport.MaxLength {
-		return errors.New("length is larger than maximum length")
+	if lengthInt > transport.ValueMaxLength {
+		return errors.New("length is larger than maximum value length")
 	}
 	length := uint16(lengthInt)
 
-	tag, err := transport.TagFor(event)
+	tag, err := transport.TagFor(input)
 	if err != nil {
-		return errors.Join(errors.New("failed to get tag"), err)
+		return fmt.Errorf("failed to get tag: %v", err)
 	}
 
 	frm := transport.Frame{Tag: tag, Length: length, Value: value}
 	return s.WriteFrame(frm)
 }
 
-func (s *session) done() <-chan error {
-	return s.done_
-}
-
 func runSession(ctx context.Context, sess *session) {
 	go func() {
-		defer close(sess.done_)
+		defer close(sess.done)
 
 		for {
 			select {
 			case <-ctx.Done():
-				sess.done_ <- ctx.Err()
+				sess.done <- ctx.Err()
 				return
 
-			case <-time.After(transport.PingInterval):
-				slog.Debug("sending ping")
-				if err := sess.WritePing(); err != nil {
-					sess.done_ <- fmt.Errorf("failed to write ping: %v", err)
+			case input := <-sess.inputs:
+				slog.Debug("sending input", "input", input)
+				if err := sess.writeInput(input); err != nil {
+					sess.done <- fmt.Errorf("failed to write input: %v", err)
 					return
 				}
 
-			case <-sess.PingDeadline():
-				if sess.Closed() {
-					continue
+			case <-sess.SendPingDeadline():
+				slog.Debug("sending ping")
+				if err := sess.SendPing(); err != nil {
+					sess.done <- fmt.Errorf("failed to write ping: %v", err)
+					return
 				}
-				sess.done_ <- errors.New("client ping deadline exceeded")
+
+			case <-sess.RecvPingDeadline():
+				sess.done <- transport.ErrPingTimedOut
 				return
 
 			case frm, ok := <-sess.Inbox():
 				if !ok {
-					sess.done_ <- sess.InboxErr()
+					sess.done <- sess.InboxErr()
 					return
 				}
 				switch frm.Tag {
 				case transport.TagPing:
 					slog.Debug("ping received")
-					sess.ResetPingDeadline()
+					sess.ResetRecvPingDeadline()
+				default:
+					slog.Warn("unexpected tag", "tag", frm.Tag)
 				}
 			}
 		}
