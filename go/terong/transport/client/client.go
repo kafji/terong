@@ -116,7 +116,10 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 			sess.Close()
 
 		reconnect:
-			slog.Info(fmt.Sprintf("reconnecting to server in %d seconds", transport.ReconnectDelay/time.Second))
+			slog.Info(
+				fmt.Sprintf("reconnecting to server in %d seconds", transport.ReconnectDelay/time.Second),
+				"address", cfg.Addr,
+			)
 			select {
 			case <-ctx.Done():
 				h.err = ctx.Err()
