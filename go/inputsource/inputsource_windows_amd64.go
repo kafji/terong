@@ -33,8 +33,14 @@ type Handle struct {
 
 func Start() *Handle {
 	h := &Handle{inputs: make(chan inputevent.InputEvent, 1_000)}
+	h.mu.Lock() // lock 'a
 	go func() {
+		runtime.LockOSThread()
+		h.threadID = C.GetCurrentThreadId()
+		h.mu.Unlock() // unlock 'a
 		err := run(h)
+		runtime.UnlockOSThread()
+
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.stopped = true
@@ -55,54 +61,29 @@ func (h *Handle) Error() error {
 }
 
 func (h *Handle) Stop() {
-	for {
-		h.mu.Lock()
-		done := false
-		switch {
-		case h.stopped:
-			done = true
-		case h.threadID == 0:
-		default:
-			C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_CONTROL_COMMAND, C.CONTROL_COMMAND_STOP, 0)
-			done = true
-		}
-		h.mu.Unlock()
-		if done {
-			break
-		}
+	if h.stopped {
+		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopped {
+		return
+	}
+	C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_CONTROL_COMMAND, C.CONTROL_COMMAND_STOP, 0)
 }
 
 func (h *Handle) SetCaptureInputs(flag bool) {
-	for {
-		h.mu.Lock()
-		done := false
-		switch {
-		case h.threadID == 0:
-		default:
-			if flag {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_INPUTS, C.TRUE, 0)
-			} else {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_INPUTS, C.FALSE, 0)
-			}
-			done = true
-		}
-		h.mu.Unlock()
-		if done {
-			break
-		}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if flag {
+		C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_INPUTS, C.TRUE, 0)
+	} else {
+		C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_INPUTS, C.FALSE, 0)
 	}
 }
 
 func run(handle *Handle) error {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
 	var err error
-
-	handle.mu.Lock()
-	handle.threadID = C.GetCurrentThreadId()
-	handle.mu.Unlock()
 
 	// https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandleexw
 	var moduleHandle C.HMODULE
@@ -247,11 +228,11 @@ func run(handle *Handle) error {
 				}
 			}
 
+			slog.Debug("sending input", "input", input)
 			if input != nil {
 				input = normalizer.Normalize(input)
 				select {
 				case handle.inputs <- input:
-					slog.Debug("input sent", "input", input)
 				default:
 					slog.Warn("dropping input, channel was blocked", "input", input)
 				}
