@@ -110,7 +110,10 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 			default:
 			}
 
-		case err := <-sess.done:
+		case err, ok := <-sess.done:
+			if !ok {
+				continue
+			}
 			slog.Error("session error", "error", err)
 			switch {
 			case errors.Is(err, transport.ErrPingTimedOut):
@@ -192,43 +195,42 @@ func runSession(ctx context.Context, sess *session) {
 	go func() {
 		defer close(sess.done)
 
-		for {
-			select {
-			case <-ctx.Done():
-				sess.done <- ctx.Err()
-				return
+		err := func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
 
-			case input := <-sess.inputs:
-				slog.Debug("sending input", "input", input)
-				if err := sess.writeInput(input); err != nil {
-					sess.done <- fmt.Errorf("failed to write input: %v", err)
-					return
-				}
+				case input := <-sess.inputs:
+					slog.Debug("sending input", "input", input)
+					if err := sess.writeInput(input); err != nil {
+						return fmt.Errorf("failed to write input: %v", err)
+					}
 
-			case <-sess.SendPingDeadline():
-				slog.Debug("sending ping")
-				if err := sess.SendPing(); err != nil {
-					sess.done <- fmt.Errorf("failed to write ping: %v", err)
-					return
-				}
+				case <-sess.SendPingDeadline():
+					slog.Debug("sending ping")
+					if err := sess.SendPing(); err != nil {
+						return fmt.Errorf("failed to write ping: %v", err)
+					}
 
-			case <-sess.RecvPingDeadline():
-				sess.done <- transport.ErrPingTimedOut
-				return
+				case <-sess.RecvPingDeadline():
+					return transport.ErrPingTimedOut
 
-			case frm, ok := <-sess.Inbox():
-				if !ok {
-					sess.done <- sess.InboxErr()
-					return
-				}
-				switch frm.Tag {
-				case transport.TagPing:
-					slog.Debug("ping received")
-					sess.ResetRecvPingDeadline()
-				default:
-					slog.Warn("unexpected tag", "tag", frm.Tag)
+				case frm, ok := <-sess.Inbox():
+					if !ok {
+						return sess.InboxErr()
+					}
+					switch frm.Tag {
+					case transport.TagPing:
+						slog.Debug("ping received")
+						sess.ResetRecvPingDeadline()
+					default:
+						slog.Warn("unexpected tag", "tag", frm.Tag)
+					}
 				}
 			}
-		}
+		}()
+
+		sess.done <- err
 	}()
 }

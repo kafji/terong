@@ -5,10 +5,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/signal"
 	"slices"
-	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -22,10 +19,7 @@ import (
 var slog = logging.NewLogger("terong/server")
 
 func Start(ctx context.Context) {
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT)
-
-	console, err := disableQuickEdit()
+	err := disableQuickEdit()
 	if err != nil {
 		slog.Error("failed to disable quick edit", "error", err)
 		return
@@ -51,10 +45,6 @@ restart:
 loop:
 	for {
 		select {
-		case signal := <-signals:
-			slog.Info("signal received", "signal", signal)
-			break loop
-
 		case <-ctx.Done():
 			slog.Error("context error", "error", err)
 			break loop
@@ -73,9 +63,6 @@ loop:
 			goto restart
 		}
 	}
-
-	slog.Debug("restoring console mode")
-	console.restore()
 }
 
 func run(ctx context.Context, cfg *config.Config) <-chan error {
@@ -194,52 +181,23 @@ func (b *keyBuffer) toggleKeyStrokeExists(after time.Time) (bool, time.Time) {
 	return false, time.Time{}
 }
 
-type console struct {
-	noop    bool
-	oldMode uint32
-}
-
-func disableQuickEdit() (console, error) {
-	handle, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
-	if err != nil {
-		return console{}, fmt.Errorf("failed to get handle: %v", err)
-	}
-	defer windows.CloseHandle(handle)
-
-	var mode uint32
-	err = windows.GetConsoleMode(handle, &mode)
-	if err != nil {
-		return console{}, fmt.Errorf("failed to get mode: %v", err)
-	}
-
-	noop := true
-	if mode&windows.ENABLE_QUICK_EDIT_MODE > 0 {
-		noop = false
-		newMode := mode & ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
-		err = windows.SetConsoleMode(handle, newMode)
-		if err != nil {
-			return console{}, fmt.Errorf("failed to set new mode: %v", err)
-		}
-	}
-
-	return console{noop: noop, oldMode: mode}, nil
-}
-
-func (c console) restore() error {
-	if c.noop {
-		return nil
-	}
-
+func disableQuickEdit() error {
 	handle, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
 	if err != nil {
 		return fmt.Errorf("failed to get handle: %v", err)
 	}
 	defer windows.CloseHandle(handle)
 
-	slog.Debug("setting console mode to its old value")
-	err = windows.SetConsoleMode(handle, c.oldMode)
+	var mode uint32
+	err = windows.GetConsoleMode(handle, &mode)
 	if err != nil {
-		return fmt.Errorf("failed to set mode: %v", err)
+		return fmt.Errorf("failed to get mode: %v", err)
+	}
+
+	mode &= ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
+	err = windows.SetConsoleMode(handle, mode)
+	if err != nil {
+		return nil
 	}
 
 	return nil
