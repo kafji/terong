@@ -1,5 +1,3 @@
-Go rewrite.
+Go implementation.
 
-## Why rewrite from Rust?
-
-Rust libraries are often moving target.
+See [/rs](../rs) for the Rust implementation.

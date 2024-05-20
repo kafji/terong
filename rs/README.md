@@ -1,3 +1,3 @@
-This directory hosts 1 project:
+This directory hosts these projects:
 
-  1. [Terong](./terong), a KVM switch software.
+- [Terong](./terong), a KVM switch software.
