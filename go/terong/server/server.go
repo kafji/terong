@@ -16,7 +16,7 @@ import (
 	"kafji.net/terong/inputsource"
 	"kafji.net/terong/logging"
 	"kafji.net/terong/terong/config"
-	"kafji.net/terong/transport/server"
+	"kafji.net/terong/terong/transport/server"
 )
 
 var slog = logging.NewLogger("terong/server")

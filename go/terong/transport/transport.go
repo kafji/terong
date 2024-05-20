@@ -12,7 +12,7 @@ import (
 	"kafji.net/terong/logging"
 )
 
-var slog = logging.NewLogger("transport")
+var slog = logging.NewLogger("terong/transport")
 
 const ValueMaxLength = 1024 - 2 /* tag */ - 2 /* length */
 // ValueMaxLength can fit in uint16.

@@ -13,10 +13,10 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"kafji.net/terong/inputevent"
 	"kafji.net/terong/logging"
-	"kafji.net/terong/transport"
+	"kafji.net/terong/terong/transport"
 )
 
-var slog = logging.NewLogger("transport/client")
+var slog = logging.NewLogger("terong/transport/client")
 
 type Handle struct {
 	inputs chan inputevent.InputEvent
