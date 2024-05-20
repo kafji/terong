@@ -25,8 +25,10 @@ type Handle struct {
 	stopped  bool
 	err      error
 
-	inputs           chan inputevent.InputEvent
-	captureMouseMove bool
+	inputs        chan inputevent.InputEvent
+	captureInputs bool
+	screenCenter  point
+	cursorPos     *C.POINT
 }
 
 func Start() *Handle {
@@ -71,7 +73,7 @@ func (h *Handle) Stop() {
 	}
 }
 
-func (h *Handle) SetEatInput(flag bool) {
+func (h *Handle) SetCaptureInputs(flag bool) {
 	for {
 		h.mu.Lock()
 		done := false
@@ -79,30 +81,9 @@ func (h *Handle) SetEatInput(flag bool) {
 		case h.threadID == 0:
 		default:
 			if flag {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_EAT_INPUT, C.TRUE, 0)
+				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_INPUTS, C.TRUE, 0)
 			} else {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_EAT_INPUT, C.FALSE, 0)
-			}
-			done = true
-		}
-		h.mu.Unlock()
-		if done {
-			break
-		}
-	}
-}
-
-func (h *Handle) SetCaptureMouseMove(flag bool) {
-	for {
-		h.mu.Lock()
-		done := false
-		switch {
-		case h.threadID == 0:
-		default:
-			if flag {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_MOUSE_MOVE, C.TRUE, 0)
-			} else {
-				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_MOUSE_MOVE, C.FALSE, 0)
+				C.PostThreadMessageW(h.threadID, C.MESSAGE_CODE_SET_CAPTURE_INPUTS, C.FALSE, 0)
 			}
 			done = true
 		}
@@ -117,59 +98,41 @@ func run(handle *Handle) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	var mouseHook C.HHOOK
-	var keyboardHook C.HHOOK
+	var err error
 
-	defer func() {
-		if mouseHook != nil {
-			C.UnhookWindowsHookEx(mouseHook)
-		}
-		if keyboardHook != nil {
-			C.UnhookWindowsHookEx(keyboardHook)
-		}
-	}()
+	handle.mu.Lock()
+	handle.threadID = C.GetCurrentThreadId()
+	handle.mu.Unlock()
 
-	err := func() error {
-		handle.mu.Lock()
-		defer handle.mu.Unlock()
+	// https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandleexw
+	var moduleHandle C.HMODULE
+	ret := C.GetModuleHandleExW(0, nil, &moduleHandle)
+	if ret == 0 {
+		return windows.GetLastError()
+	}
 
-		handle.threadID = C.GetCurrentThreadId()
+	// https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc
+	mouseHook := C.SetWindowsHookExW(C.WH_MOUSE_LL, (*[0]byte)(C.mouse_hook_proc), moduleHandle, 0)
+	if mouseHook == nil {
+		return windows.GetLastError()
+	}
+	defer C.UnhookWindowsHookEx(mouseHook)
 
-		// https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-getmodulehandleexw
-		var moduleHandle C.HMODULE
-		ret := C.GetModuleHandleExW(0, nil, &moduleHandle)
-		if ret == 0 {
-			return windows.GetLastError()
-		}
+	// https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc
+	keyboardHook := C.SetWindowsHookExW(C.WH_KEYBOARD_LL, (*[0]byte)(C.keyboard_hook_proc), moduleHandle, 0)
+	if keyboardHook == nil {
+		return windows.GetLastError()
+	}
+	defer C.UnhookWindowsHookEx(keyboardHook)
 
-		// https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc
-		mouseHook = C.SetWindowsHookExW(C.WH_MOUSE_LL, (*[0]byte)(C.mouse_hook_proc), moduleHandle, 0)
-		if mouseHook == nil {
-			return windows.GetLastError()
-		}
-
-		// https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc
-		keyboardHook = C.SetWindowsHookExW(C.WH_KEYBOARD_LL, (*[0]byte)(C.keyboard_hook_proc), moduleHandle, 0)
-		if keyboardHook == nil {
-			return windows.GetLastError()
-		}
-
-		return nil
-	}()
+	handle.screenCenter, err = screenCenter()
 	if err != nil {
 		return err
 	}
-
-	screen, err := screenSize()
-	if err != nil {
-		return err
-	}
-	center := point{x: screen.x / 2, y: screen.y / 2}
 
 	normalizer := inputevent.Normalizer{}
 
 	// https://learn.microsoft.com/en-us/windows/win32/winmsg/using-messages-and-message-queues
-loop:
 	for {
 		// Achtung!
 		//
@@ -186,9 +149,9 @@ loop:
 			return err
 		}
 
-		if handle.captureMouseMove {
+		if handle.captureInputs {
 			// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursorpos
-			ret := C.SetCursorPos(C.int(center.x), C.int(center.y))
+			ret := C.SetCursorPos(C.int(handle.screenCenter.x), C.int(handle.screenCenter.y))
 			if ret == 0 {
 				return windows.GetLastError()
 			}
@@ -198,7 +161,7 @@ loop:
 		var msg C.MSG
 		ret := C.get_message(&msg)
 		if ret == 0 {
-			break loop
+			return nil
 		}
 		if ret < 0 {
 			return windows.GetLastError()
@@ -214,12 +177,12 @@ loop:
 			case C.WH_MOUSE_LL:
 				switch hookEvent.code {
 				case C.WM_MOUSEMOVE:
-					if !handle.captureMouseMove {
+					if !handle.captureInputs {
 						continue
 					}
 					data := (*C.mouse_move_t)(unsafe.Pointer(&hookEvent.data))
-					dx := data.x - C.LONG(center.x)
-					dy := -(data.y - C.LONG(center.y))
+					dx := data.x - C.LONG(handle.screenCenter.x)
+					dy := -(data.y - C.LONG(handle.screenCenter.y))
 					input = inputevent.MouseMove{DX: int16(dx), DY: int16(dy)}
 
 				case C.WM_LBUTTONDOWN:
@@ -300,25 +263,31 @@ loop:
 				handle.mu.Lock()
 				handle.stopped = true
 				handle.mu.Unlock()
-				break loop
+				return nil
 			}
 
-		case C.MESSAGE_CODE_SET_EAT_INPUT:
-			C.set_eat_input(C.BOOL(msg.wParam))
-
-		case C.MESSAGE_CODE_SET_CAPTURE_MOUSE_MOVE:
-			var flag bool
+		case C.MESSAGE_CODE_SET_CAPTURE_INPUTS:
 			switch C.BOOL(msg.wParam) {
 			case C.TRUE:
-				flag = true
+				handle.captureInputs = true
 			case C.FALSE:
-				flag = false
+				handle.captureInputs = false
 			}
-			handle.captureMouseMove = flag
-		}
-	}
-
-	return nil
+			C.set_eat_input(C.BOOL(msg.wParam))
+			if handle.captureInputs {
+				handle.cursorPos = &C.POINT{}
+				ret := C.GetCursorPos(handle.cursorPos)
+				if ret == 0 {
+					return windows.GetLastError()
+				}
+			} else if handle.cursorPos != nil {
+				ret := C.SetCursorPos(C.int(handle.cursorPos.x), C.int(handle.cursorPos.y))
+				if ret == 0 {
+					return windows.GetLastError()
+				}
+			}
+		} // switch
+	} // for
 }
 
 type point struct {
@@ -335,6 +304,14 @@ func screenSize() (point, error) {
 
 	}
 	return point{x: uint16(rect.right - rect.left), y: uint16(rect.bottom - rect.top)}, nil
+}
+
+func screenCenter() (point, error) {
+	screen, err := screenSize()
+	if err != nil {
+		return point{}, err
+	}
+	return point{x: screen.x / 2, y: screen.y / 2}, nil
 }
 
 func xbuttonToMouseButton(xbutton C.WORD) inputevent.MouseButton {

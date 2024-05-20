@@ -83,13 +83,11 @@ func run(ctx context.Context, cfg *config.Config) <-chan error {
 			}
 			transport := server.Start(ctx, transportCfg, events)
 
+			buffer := keyBuffer{}
 			relay := false
 			toggledAt := time.Time{}
 
-			buffer := keyBuffer{}
-
-			source.SetEatInput(relay)
-			source.SetCaptureMouseMove(relay)
+			source.SetCaptureInputs(relay)
 
 			for {
 				select {
@@ -111,8 +109,7 @@ func run(ctx context.Context, cfg *config.Config) <-chan error {
 						slog.Debug("toggling relay")
 						relay = !relay
 						toggledAt = at
-						source.SetEatInput(relay)
-						source.SetCaptureMouseMove(relay)
+						source.SetCaptureInputs(relay)
 					}
 
 				case err := <-transport:
