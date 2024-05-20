@@ -42,8 +42,6 @@ const (
 	TagKeyPress
 
 	TagPing
-
-	TagClose
 )
 
 func TagFor(v any) (Tag, error) {
@@ -236,18 +234,7 @@ func (s *Session) SendPing() error {
 	return nil
 }
 
-func (s *Session) writeCloseFrame(reason string) error {
-	value := []byte(reason)
-	length := len(value)
-	if length > ValueMaxLength {
-		length = ValueMaxLength
-		slog.Warn("reason is longer than maximum value length")
-	}
-	frm := Frame{Tag: TagClose, Length: uint16(length), Value: value[:length]}
-	return s.WriteFrame(frm)
-}
-
-func (s *Session) Close(reason string) {
+func (s *Session) Close() {
 	if s.closed {
 		return
 	}
@@ -258,13 +245,7 @@ func (s *Session) Close(reason string) {
 	}
 	s.closed = true
 
-	slog.Debug("sending close frame")
-	err := s.writeCloseFrame(reason)
-	if err != nil {
-		slog.Warn("failed to write close frame", "error", err)
-	}
-
-	err = s.conn.Close()
+	err := s.conn.Close()
 	if err != nil {
 		slog.Warn(
 			"failed to close connection",

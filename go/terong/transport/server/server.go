@@ -82,7 +82,7 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 
 	sess := emptySession()
 	defer func() {
-		sess.Close("server shutting down")
+		sess.Close()
 	}()
 
 	for {
@@ -113,13 +113,8 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 			}
 
 		case err := <-sess.done:
-			slog.Error("session error", "error", err)
-			switch {
-			case errors.Is(err, transport.ErrPingTimedOut):
-				sess.Close(err.Error())
-			default:
-				sess.Close("")
-			}
+			slog.Error("session terminated", "error", err)
+			sess.Close()
 		}
 	}
 }

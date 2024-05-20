@@ -96,7 +96,7 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 		var sess *session
 		defer func() {
 			if sess != nil {
-				sess.Close("client shutting down")
+				sess.Close()
 			}
 		}()
 
@@ -113,12 +113,7 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 			runSession(ctx, sess, h.inputs)
 			err = <-sess.done
 			slog.Error("session terminated", "error", err)
-			switch {
-			case errors.Is(err, transport.ErrPingTimedOut):
-				sess.Close(err.Error())
-			default:
-				sess.Close("")
-			}
+			sess.Close()
 
 		reconnect:
 			slog.Info(fmt.Sprintf("reconnecting to server in %d seconds", transport.ReconnectDelay/time.Second))
