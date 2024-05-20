@@ -55,11 +55,9 @@ restart:
 }
 
 func run(ctx context.Context, cfg *config.Config) <-chan error {
-	done := make(chan error)
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-
 		err := func() error {
 			inputs := make(chan inputevent.InputEvent)
 			defer close(inputs)
@@ -72,19 +70,14 @@ func run(ctx context.Context, cfg *config.Config) <-chan error {
 			}
 			transport := client.Start(ctx, transportCfg)
 
-			sinkInputs := make(chan any)
-			sinkErr := make(chan error, 1)
-			go func() {
-				err := inputsink.Start(ctx, sinkInputs)
-				sinkErr <- err
-			}()
+			sinkDone := inputsink.Start(ctx, inputs)
 
 			for {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
 
-				case err := <-sinkErr:
+				case err := <-sinkDone:
 					return err
 
 				case input, ok := <-transport.Inputs():
@@ -92,7 +85,7 @@ func run(ctx context.Context, cfg *config.Config) <-chan error {
 						return transport.Err()
 					}
 					slog.Debug("input received", "input", input)
-					sinkInputs <- input
+					inputs <- input
 				}
 			}
 		}()

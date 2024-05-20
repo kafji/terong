@@ -93,25 +93,32 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 
 		dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: transport.ConnectTimeout}, Config: tlsCfg}
 
+		var sess *session
+		defer func() {
+			sess.Close("client shutting down")
+		}()
+
 		for {
 			slog.Info("connecting to server", "address", cfg.Addr)
 			conn, err := dialer.DialContext(ctx, "tcp4", cfg.Addr)
 			if err != nil {
 				slog.Error("failed to connect to server", "address", cfg.Addr)
-			} else {
-				slog.Info("connected to server", "address", conn.RemoteAddr())
-				sess := &session{Session: transport.NewSession(conn)}
-				runSession(ctx, sess, h.inputs)
-				err = <-sess.done
-				slog.Error("session error", "error", err)
-				switch {
-				case errors.Is(err, transport.ErrPingTimedOut):
-					sess.Close(err.Error())
-				default:
-					sess.Close("")
-				}
+				goto reconnect
 			}
 
+			slog.Info("connected to server", "address", conn.RemoteAddr())
+			sess = newSession(conn)
+			runSession(ctx, sess, h.inputs)
+			err = <-sess.done
+			slog.Error("session terminated", "error", err)
+			switch {
+			case errors.Is(err, transport.ErrPingTimedOut):
+				sess.Close(err.Error())
+			default:
+				sess.Close("")
+			}
+
+		reconnect:
 			slog.Info(fmt.Sprintf("reconnecting to server in %d seconds", transport.ReconnectDelay/time.Second))
 			select {
 			case <-ctx.Done():
@@ -130,55 +137,63 @@ type session struct {
 	done chan error
 }
 
+func newSession(conn net.Conn) *session {
+	return &session{
+		Session: transport.NewSession(conn),
+		done:    make(chan error, 1),
+	}
+}
+
 func runSession(ctx context.Context, sess *session, inputs chan<- inputevent.InputEvent) {
 	go func() {
-		defer close(sess.done)
+		err := func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
 
-		for {
-			select {
-			case <-ctx.Done():
-				sess.done <- ctx.Err()
-				return
-
-			case <-sess.SendPingDeadline():
-				slog.Debug("sending ping")
-				if err := sess.SendPing(); err != nil {
-					sess.done <- fmt.Errorf("failed to write ping: %v", err)
-					return
-				}
-
-			case <-sess.RecvPingDeadline():
-				sess.done <- transport.ErrPingTimedOut
-				return
-
-			case frm, ok := <-sess.Inbox():
-				if !ok {
-					sess.done <- sess.InboxErr()
-					return
-				}
-				switch frm.Tag {
-				case transport.TagMouseMove:
-					fallthrough
-				case transport.TagMouseClick:
-					fallthrough
-				case transport.TagMouseScroll:
-					fallthrough
-				case transport.TagKeyPress:
-					event, err := unmarshalEvent(frm)
-					if err != nil {
-						slog.Warn("failed to unmarshal event", "error", err)
-					} else {
-						slog.Debug("event received", "event", event)
-						inputs <- event
+				case <-sess.SendPingDeadline():
+					slog.Debug("sending ping")
+					if err := sess.SendPing(); err != nil {
+						return fmt.Errorf("failed to write ping: %v", err)
 					}
-				case transport.TagPing:
-					slog.Debug("ping received")
-					sess.ResetRecvPingDeadline()
-				default:
-					slog.Warn("unexpected tag", "tag", frm.Tag)
-				}
-			}
-		}
+
+				case <-sess.RecvPingDeadline():
+					return transport.ErrPingTimedOut
+
+				case frm, ok := <-sess.Inbox():
+					if !ok {
+						return sess.InboxErr()
+					}
+
+					switch frm.Tag {
+					case transport.TagMouseMove:
+						fallthrough
+					case transport.TagMouseClick:
+						fallthrough
+					case transport.TagMouseScroll:
+						fallthrough
+					case transport.TagKeyPress:
+						event, err := unmarshalEvent(frm)
+						if err != nil {
+							slog.Warn("failed to unmarshal event", "error", err)
+						} else {
+							slog.Debug("event received", "event", event)
+							inputs <- event
+						}
+
+					case transport.TagPing:
+						slog.Debug("ping received")
+						sess.ResetRecvPingDeadline()
+
+					default:
+						slog.Warn("unexpected tag", "tag", frm.Tag)
+					} // switch
+				} // select
+			} // for
+		}()
+
+		sess.done <- err
 	}()
 }
 

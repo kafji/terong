@@ -14,18 +14,24 @@ import (
 
 var slog = logging.NewLogger("terong/transport")
 
-const ValueMaxLength = 1024 - 2 /* tag */ - 2 /* length */
-// ValueMaxLength can fit in uint16.
-const _ uint16 = ValueMaxLength
+const (
+	ValueMaxLength = 1024 - 2 /* tag */ - 2 /* length */
+	// ValueMaxLength can fit in uint16.
+	_ uint16 = ValueMaxLength
+)
 
-const PingTimeout = PingInterval + 1*time.Second
-const PingInterval = 5 * time.Second
-const ConnectTimeout = 5 * time.Second
-const ReconnectDelay = 5 * time.Second
-const WriteTimeout = 100 * time.Millisecond
+const (
+	PingTimeout    = PingInterval + 1*time.Second
+	PingInterval   = 5 * time.Second
+	ConnectTimeout = 5 * time.Second
+	ReconnectDelay = 5 * time.Second
+	WriteTimeout   = 100 * time.Millisecond
+)
 
-var ErrMaxLengthExceeded = errors.New("length is larger than the maximum length")
-var ErrPingTimedOut = errors.New("ping timed out")
+var (
+	ErrMaxLengthExceeded = errors.New("length is larger than the maximum length")
+	ErrPingTimedOut      = errors.New("ping timed out")
+)
 
 type Tag uint16
 
@@ -147,15 +153,12 @@ type Session struct {
 	inboxErr error
 }
 
-func EmptySession() *Session {
-	return &Session{closed: true}
-}
-
 func NewSession(conn net.Conn) *Session {
 	s := &Session{conn: conn, inbox: make(chan Frame)}
 
 	go func() {
 		defer close(s.inbox)
+
 		for {
 			frm, err := s.ReadFrame()
 			if err != nil {
@@ -241,7 +244,7 @@ func (s *Session) writeCloseFrame(reason string) error {
 }
 
 func (s *Session) Close(reason string) {
-	if s.closed {
+	if s.closed || s.conn == nil {
 		return
 	}
 	s.mu.Lock()
@@ -271,5 +274,5 @@ func (s *Session) Close(reason string) {
 func (s *Session) Closed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.closed
+	return s.closed || s.conn == nil
 }

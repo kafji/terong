@@ -66,17 +66,14 @@ loop:
 }
 
 func run(ctx context.Context, cfg *config.Config) <-chan error {
-	done := make(chan error)
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-
 		err := func() error {
 			source := inputsource.Start()
 			defer source.Stop()
 
 			events := make(chan inputevent.InputEvent)
-			defer close(events)
 
 			transportCfg := &server.Config{
 				Addr:              fmt.Sprintf(":%d", cfg.Server.Port),

@@ -56,7 +56,7 @@ func newTLSConfig(cfg *Config) (*tls.Config, error) {
 }
 
 func Start(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) <-chan error {
-	done := make(chan error)
+	done := make(chan error, 1)
 	go func() {
 		err := run(ctx, cfg, inputs)
 		done <- err
@@ -80,8 +80,10 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 
 	receptionist := newReceptionist(listener)
 
-	sess := &session{Session: transport.EmptySession()}
-	defer sess.Close("server shutting down")
+	sess := newSession(nil)
+	defer func() {
+		sess.Close("server shutting down")
+	}()
 
 	for {
 		select {
@@ -110,10 +112,7 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 			default:
 			}
 
-		case err, ok := <-sess.done:
-			if !ok {
-				continue
-			}
+		case err := <-sess.done:
 			slog.Error("session error", "error", err)
 			switch {
 			case errors.Is(err, transport.ErrPingTimedOut):
@@ -165,7 +164,7 @@ func newSession(conn net.Conn) *session {
 	s := &session{
 		Session: transport.NewSession(conn),
 		inputs:  make(chan inputevent.InputEvent, 1),
-		done:    make(chan error),
+		done:    make(chan error, 1),
 	}
 	return s
 }
@@ -193,8 +192,6 @@ func (s *session) writeInput(input inputevent.InputEvent) error {
 
 func runSession(ctx context.Context, sess *session) {
 	go func() {
-		defer close(sess.done)
-
 		err := func() error {
 			for {
 				select {

@@ -73,7 +73,16 @@ func createEvdevDevice() (*C.struct_libevdev, error) {
 	return dev, nil
 }
 
-func Start(ctx context.Context, source <-chan any) error {
+func Start(ctx context.Context, source <-chan inputevent.InputEvent) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		err := start(ctx, source)
+		done <- err
+	}()
+	return done
+}
+
+func start(ctx context.Context, source <-chan inputevent.InputEvent) error {
 	dev, err := createEvdevDevice()
 	if err != nil {
 		return fmt.Errorf("failed to create evdev device: %v", err)
