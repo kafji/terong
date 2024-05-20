@@ -1,3 +1,3 @@
 #!/bin/bash
 
-go build -race ./cmd/terong-client
+go build ./cmd/terong-client

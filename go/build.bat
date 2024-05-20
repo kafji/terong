@@ -1,3 +1,3 @@
 @echo off
 
-go build -race .\cmd\terong-server
+go build .\cmd\terong-server
