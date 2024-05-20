@@ -75,7 +75,7 @@ func createWatcher() (*fsnotify.Watcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = watcher.Add(".\\terong.toml")
+	err = watcher.Add("./terong.toml")
 	if err != nil {
 		return nil, err
 	}

@@ -67,7 +67,7 @@ func run(ctx context.Context, cfg *config.Config) <-chan error {
 			transportCfg := &client.Config{
 				Addr:              cfg.Client.ServerAddr,
 				TLSCertPath:       cfg.Client.TLSCertPath,
-				TLSKeyPath:        cfg.Client.TLSCertPath,
+				TLSKeyPath:        cfg.Client.TLSKeyPath,
 				ServerTLSCertPath: cfg.Client.ServerTLSCertPath,
 			}
 			transport := client.Start(ctx, transportCfg)

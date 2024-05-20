@@ -63,8 +63,19 @@ func newTLSConfig(cfg *Config) (*tls.Config, error) {
 	pool.AppendCertsFromPEM(serverCert)
 
 	return &tls.Config{
-		Certificates: []tls.Certificate{keyPair},
-		RootCAs:      pool,
+		Certificates:       []tls.Certificate{keyPair},
+		RootCAs:            pool,
+		InsecureSkipVerify: true,
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			opts := x509.VerifyOptions{
+				Roots: pool,
+			}
+			_, err := cs.PeerCertificates[0].Verify(opts)
+			if err != nil {
+				slog.Debug("failed to verify peer cert", "error", err)
+			}
+			return err
+		},
 	}, nil
 }
 
