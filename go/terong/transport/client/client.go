@@ -110,6 +110,7 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 
 			slog.Info("connected to server", "address", conn.RemoteAddr())
 			sess = newSession(conn)
+			slog.Info("session established", "address", conn.RemoteAddr())
 			runSession(ctx, sess, h.inputs)
 			err = <-sess.done
 			slog.Error("session terminated", "error", err)
