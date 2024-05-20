@@ -21,10 +21,10 @@ const (
 )
 
 const (
-	PingTimeout    = PingInterval + 1*time.Second
-	PingInterval   = 5 * time.Second
+	PingInterval   = 15 * time.Second
+	PingTimeout    = PingInterval + 5*time.Second
 	ConnectTimeout = 5 * time.Second
-	ReconnectDelay = 5 * time.Second
+	ReconnectDelay = 10 * time.Second
 	WriteTimeout   = 100 * time.Millisecond
 )
 
