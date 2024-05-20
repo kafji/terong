@@ -80,7 +80,7 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 
 	receptionist := newReceptionist(listener)
 
-	sess := newSession(nil)
+	sess := emptySession()
 	defer func() {
 		sess.Close("server shutting down")
 	}()
@@ -160,13 +160,16 @@ type session struct {
 	done   chan error
 }
 
+func emptySession() *session {
+	return &session{Session: transport.EmptySession()}
+}
+
 func newSession(conn net.Conn) *session {
-	s := &session{
+	return &session{
 		Session: transport.NewSession(conn),
 		inputs:  make(chan inputevent.InputEvent, 1),
 		done:    make(chan error, 1),
 	}
-	return s
 }
 
 func (s *session) writeInput(input inputevent.InputEvent) error {

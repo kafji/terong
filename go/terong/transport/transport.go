@@ -153,6 +153,10 @@ type Session struct {
 	inboxErr error
 }
 
+func EmptySession() *Session {
+	return &Session{closed: true}
+}
+
 func NewSession(conn net.Conn) *Session {
 	s := &Session{conn: conn, inbox: make(chan Frame)}
 
@@ -244,7 +248,7 @@ func (s *Session) writeCloseFrame(reason string) error {
 }
 
 func (s *Session) Close(reason string) {
-	if s.closed || s.conn == nil {
+	if s.closed {
 		return
 	}
 	s.mu.Lock()
@@ -274,5 +278,5 @@ func (s *Session) Close(reason string) {
 func (s *Session) Closed() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.closed || s.conn == nil
+	return s.closed
 }
