@@ -31,15 +31,15 @@ type Client struct {
 	ServerTLSCertPath string `toml:"server_tls_cert_path"`
 }
 
-func ReadConfig() (Config, error) {
+func ReadConfig() (*Config, error) {
 	var c Config
 	file, err := os.ReadFile(filePath)
 	if err != nil {
-		return Config{}, err
+		return nil, err
 	}
 	err = toml.Unmarshal(file, &c)
 	if err != nil {
-		return Config{}, err
+		return nil, err
 	}
-	return c, nil
+	return &c, nil
 }

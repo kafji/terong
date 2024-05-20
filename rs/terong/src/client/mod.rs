@@ -39,9 +39,8 @@ async fn start_app(cfg: ClientConfig) -> Result<(), Error> {
             tls_certs,
             tls_key,
             server_tls_certs,
-            event_tx,
         };
-        transport_client::start(args)
+        transport_client::start(args, event_tx)
     };
 
     // input sink receives input events and emulate the input events in its host

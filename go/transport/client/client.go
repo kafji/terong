@@ -2,9 +2,12 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -28,21 +31,64 @@ func (h *Handle) Err() error {
 	return h.err
 }
 
-func Start(ctx context.Context, addr string) *Handle {
+type Config struct {
+	Addr              string
+	TLSCertPath       string
+	TLSKeyPath        string
+	ServerTLSCertPath string
+}
+
+func newTLSConfig(cfg *Config) (*tls.Config, error) {
+	cert, err := os.ReadFile(cfg.TLSCertPath)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := os.ReadFile(cfg.TLSKeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	keyPair, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		return nil, err
+	}
+
+	serverCert, err := os.ReadFile(cfg.ServerTLSCertPath)
+	if err != nil {
+		return nil, err
+	}
+
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(serverCert)
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{keyPair},
+		RootCAs:      pool,
+	}, nil
+}
+
+func Start(ctx context.Context, cfg *Config) *Handle {
 	h := &Handle{inputs: make(chan inputevent.InputEvent)}
 
 	go func() {
 		defer close(h.inputs)
 
-		dialer := &net.Dialer{Timeout: transport.ConnectTimeout}
+		tlsCfg, err := newTLSConfig(cfg)
+		if err != nil {
+			h.err = err
+			return
+		}
+
+		dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: transport.ConnectTimeout}, Config: tlsCfg}
 
 		for {
-			slog.Info("connecting to server", "address", addr)
-			conn, err := dialer.DialContext(ctx, "tcp4", addr)
+			slog.Info("connecting to server", "address", cfg.Addr)
+			conn, err := dialer.DialContext(ctx, "tcp4", cfg.Addr)
 			if err != nil {
-				slog.Error("failed to connect to server", "address", addr)
+				slog.Error("failed to connect to server", "address", cfg.Addr)
 			} else {
-				slog.Info("connected to server", "address", addr)
+				slog.Info("connected to server", "address", conn.RemoteAddr())
 				sess := &session{Session: transport.NewSession(conn)}
 				runSession(ctx, sess, h.inputs)
 				err = <-sess.done

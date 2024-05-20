@@ -8,11 +8,11 @@ import (
 )
 
 type Watcher struct {
-	cfgs chan Config
+	cfgs chan *Config
 	err  error
 }
 
-func (w *Watcher) Configs() <-chan Config {
+func (w *Watcher) Configs() <-chan *Config {
 	return w.cfgs
 }
 
@@ -21,7 +21,7 @@ func (w *Watcher) Err() error {
 }
 
 func Watch(ctx context.Context) *Watcher {
-	w := &Watcher{cfgs: make(chan Config)}
+	w := &Watcher{cfgs: make(chan *Config)}
 
 	go func() {
 		defer close(w.cfgs)

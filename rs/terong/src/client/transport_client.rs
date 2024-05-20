@@ -2,76 +2,58 @@ use crate::{
     log_error,
     transport::{
         protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
-        Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
+        Certificate, PrivateKey, Transport,
     },
 };
-use anyhow::{Context, Error};
+use anyhow::Error;
 use macross::impl_from;
-use std::{
-    fmt,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
+use std::{fmt, net::SocketAddr, time::Duration};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     select,
     sync::mpsc,
     task::{self, JoinHandle},
     time::{interval_at, sleep, Instant, MissedTickBehavior},
 };
-use tokio_rustls::{
-    rustls::{self, ClientConfig, ServerName},
-    TlsConnector, TlsStream,
-};
+use tokio_native_tls::native_tls;
 use tracing::{debug, error, info};
 
 /// Time it takes before client giving up on connecting to the server.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-type ClientTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ServerMessage, ClientMessage>;
+type ClientTransport = Transport<ServerMessage, ClientMessage>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransportClient {
     pub server_addr: SocketAddr,
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
     pub server_tls_certs: Vec<Certificate>,
-    pub event_tx: mpsc::Sender<InputEvent>,
 }
 
-pub fn start(args: TransportClient) -> JoinHandle<()> {
-    task::spawn(run_transport(args))
+pub fn start(args: TransportClient, event_tx: mpsc::Sender<InputEvent>) -> JoinHandle<()> {
+    task::spawn(run_transport(args, event_tx))
 }
 
-async fn run_transport(args: TransportClient) {
-    let TransportClient {
-        server_addr,
-        event_tx,
-        tls_certs,
-        tls_key,
-        server_tls_certs,
-    } = args;
-
-    let tls_config = {
-        let tls = create_client_tls_config(
-            tls_certs,
-            tls_key,
-            server_tls_certs.into_iter().last().unwrap(),
-        )
-        .unwrap();
-        Arc::new(tls)
-    };
+async fn run_transport(args: TransportClient, event_tx: mpsc::Sender<InputEvent>) {
+    let identity = native_tls::Identity::from_pkcs8(&args.tls_certs[0].0, &args.tls_key.0).unwrap();
+    let server_cert = native_tls::Certificate::from_pem(&args.server_tls_certs[0].0).unwrap();
+    let tls_connector = native_tls::TlsConnector::builder()
+        .identity(identity)
+        .disable_built_in_roots(true)
+        .add_root_certificate(server_cert)
+        .build()
+        .unwrap()
+        .into();
 
     let mut retry_count = 0;
 
     loop {
         if let Err(err) = connect(
-            &server_addr,
-            tls_config.clone(),
+            &args.server_addr,
             &event_tx,
             &mut retry_count,
+            &tls_connector,
         )
         .await
         {
@@ -122,9 +104,9 @@ impl std::error::Error for ConnectError {
 
 async fn connect(
     server_addr: &SocketAddr,
-    tls_config: Arc<ClientConfig>,
     event_tx: &mpsc::Sender<InputEvent>,
     retry_count: &mut u8,
+    tls_connector: &tokio_native_tls::TlsConnector,
 ) -> Result<(), ConnectError> {
     info!(?server_addr, "connecting to server");
 
@@ -144,16 +126,14 @@ async fn connect(
     *retry_count = 0;
     debug!("retry count reset to zero");
 
-    let transporter: ClientTransporter = Transporter::Plain(Transport::new(stream));
+    let stream = tls_connector.connect("", stream).await.unwrap();
+    let transport: ClientTransport = Transport::new(stream);
 
     let session = Session {
-        server_addr,
-        tls_config,
         event_tx,
-        transporter,
+        transporter: transport,
         state: Default::default(),
     };
-
     let result = run_session(session).await;
 
     info!(?server_addr, "disconnected from server");
@@ -163,18 +143,16 @@ async fn connect(
     Ok(())
 }
 
+#[derive(Debug)]
 struct Session<'a> {
-    server_addr: &'a SocketAddr,
-    tls_config: Arc<ClientConfig>,
     event_tx: &'a mpsc::Sender<InputEvent>,
-    transporter: ClientTransporter,
+    transporter: ClientTransport,
     state: SessionState,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
 pub enum SessionState {
     #[default]
-    Handshaking,
     Idle,
     EventRelayed {
         event: InputEvent,
@@ -183,10 +161,8 @@ pub enum SessionState {
 
 async fn run_session(session: Session<'_>) -> Result<(), Error> {
     let Session {
-        server_addr,
-        tls_config,
         event_tx,
-        mut transporter,
+        transporter: mut transport,
         mut state,
     } = session;
 
@@ -201,29 +177,7 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
 
     loop {
         state = match state {
-            SessionState::Handshaking => {
-                debug!(?server_addr, "upgrading to secure transport");
-
-                // upgrade to tls
-                transporter = {
-                    let tls_config = tls_config.clone();
-                    transporter
-                        .upgrade(move |stream| async move {
-                            upgrade_client_stream(stream, tls_config, server_addr.ip()).await
-                        })
-                        .await?
-                };
-
-                debug!(?server_addr, "connection upgraded");
-
-                info!(?server_addr, "session established");
-
-                SessionState::Idle
-            }
-
             SessionState::Idle => {
-                let transport = transporter.secure()?;
-
                 select! { biased;
 
                     _ = ping_ticker.tick() => {
@@ -288,46 +242,4 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-async fn upgrade_client_stream<S>(
-    stream: S,
-    tls_config: Arc<ClientConfig>,
-    server_addr: IpAddr,
-) -> Result<TlsStream<S>, Error>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let tls: TlsConnector = tls_config.into();
-
-    let stream = tls
-        .connect(ServerName::IpAddress(server_addr), stream)
-        .await
-        .context("tls connect failed")?;
-
-    Ok(stream.into())
-}
-
-fn create_client_tls_config(
-    client_certs: Vec<Certificate>,
-    client_key: PrivateKey,
-    server_cert: Certificate,
-) -> Result<ClientConfig, Error> {
-    let cert_verifier = Arc::new(SingleCertVerifier::new(server_cert));
-
-    let mut cfg = ClientConfig::builder()
-        .with_safe_defaults()
-        .with_custom_certificate_verifier(cert_verifier)
-        .with_single_cert(
-            client_certs
-                .into_iter()
-                .map(|x| rustls::Certificate(x.into()))
-                .collect(),
-            rustls::PrivateKey(client_key.into()),
-        )
-        .context("failed to create client config tls")?;
-
-    cfg.enable_sni = false;
-
-    Ok(cfg)
 }

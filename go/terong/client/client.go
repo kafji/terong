@@ -28,7 +28,7 @@ restart:
 
 	slog.Info("starting client", "config", cfg)
 	runCtx, cancelRun := context.WithCancel(ctx)
-	go run(runCtx, cfg)
+	runDone := run(runCtx, cfg)
 	defer cancelRun()
 
 	var ok bool
@@ -38,7 +38,11 @@ restart:
 			slog.Error("context error", "error", err)
 			return
 
-		case cfg, ok = <-watcher.Changes():
+		case err := <-runDone:
+			slog.Error("error", "error", err)
+			return
+
+		case cfg, ok = <-watcher.Configs():
 			if !ok {
 				slog.Error("config watcher error", "error", watcher.Err())
 				return
@@ -50,38 +54,51 @@ restart:
 	}
 }
 
-func run(ctx context.Context, cfg config.Config) {
-	slog.Info("starting app", "config", cfg)
+func run(ctx context.Context, cfg *config.Config) <-chan error {
+	done := make(chan error)
 
-	inputs := make(chan inputevent.InputEvent)
-	defer close(inputs)
-
-	transport := client.Start(ctx, cfg.Client.ServerAddr)
-
-	sinkInputs := make(chan any)
-	sinkError := make(chan error)
 	go func() {
-		err := inputsink.Start(ctx, sinkInputs)
-		sinkError <- err
+		defer close(done)
+
+		err := func() error {
+			inputs := make(chan inputevent.InputEvent)
+			defer close(inputs)
+
+			transportCfg := &client.Config{
+				Addr:              cfg.Client.ServerAddr,
+				TLSCertPath:       cfg.Client.TLSCertPath,
+				TLSKeyPath:        cfg.Client.TLSCertPath,
+				ServerTLSCertPath: cfg.Client.ServerTLSCertPath,
+			}
+			transport := client.Start(ctx, transportCfg)
+
+			sinkInputs := make(chan any)
+			sinkErr := make(chan error, 1)
+			go func() {
+				err := inputsink.Start(ctx, sinkInputs)
+				sinkErr <- err
+			}()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+
+				case err := <-sinkErr:
+					return err
+
+				case input, ok := <-transport.Inputs():
+					if !ok {
+						return transport.Err()
+					}
+					slog.Debug("input received", "input", input)
+					sinkInputs <- input
+				}
+			}
+		}()
+
+		done <- err
 	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Error("context error", "error", ctx.Err())
-			return
-
-		case err := <-sinkError:
-			slog.Error("sink error", "error", err)
-			return
-
-		case input, ok := <-transport.Inputs():
-			if !ok {
-				slog.Error("transport error", "error", transport.Err())
-				return
-			}
-			slog.Debug("input received", "input", input)
-			sinkInputs <- input
-		}
-	}
+	return done
 }

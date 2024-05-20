@@ -2,7 +2,7 @@ use crate::{
     log_error,
     transport::{
         protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
-        Certificate, PrivateKey, SingleCertVerifier, Transport, Transporter,
+        Certificate, PrivateKey, Transport,
     },
 };
 use anyhow::{Context, Error};
@@ -14,58 +14,46 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
     select,
     sync::mpsc::{self, error::SendError},
     task::{self, JoinError, JoinHandle},
     time::{interval_at, Instant, MissedTickBehavior},
 };
-use tokio_rustls::{rustls::ServerConfig, TlsAcceptor, TlsStream};
+use tokio_native_tls::native_tls;
 use tracing::{debug, error, info};
 
-type ServerTransporter = Transporter<TcpStream, TlsStream<TcpStream>, ClientMessage, ServerMessage>;
+type ServerTransport = Transport<ClientMessage, ServerMessage>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransportServer {
     pub port: u16,
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
     pub client_tls_certs: Vec<Certificate>,
-    pub event_rx: mpsc::Receiver<InputEvent>,
 }
 
-pub fn start(args: TransportServer) -> JoinHandle<()> {
-    task::spawn(run_transport(args))
+pub fn start(args: TransportServer, event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
+    task::spawn(run_transport(args, event_rx))
 }
 
-async fn run_transport(args: TransportServer) {
-    let TransportServer {
-        port,
-        tls_certs,
-        tls_key,
-        mut event_rx,
-        client_tls_certs,
-    } = args;
+async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<InputEvent>) {
+    let identity = native_tls::Identity::from_pkcs8(&args.tls_certs[0].0, &args.tls_key.0).unwrap();
+    // schannel doesn't provide client cert verification https://learn.microsoft.com/en-us/windows/win32/secauthn/performing-authentication-using-schannel
+    // and native-tls doesn't allow injecting peer verification
+    let tls_acceptor = native_tls::TlsAcceptor::builder(identity)
+        .build()
+        .unwrap()
+        .into();
 
-    let tls_config = {
-        let tls = create_server_tls_config(
-            tls_certs,
-            tls_key,
-            client_tls_certs.into_iter().last().unwrap(),
-        )
-        .unwrap();
-        Arc::new(tls)
-    };
-
-    let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), port);
+    let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), args.port);
 
     info!("listening at {}", server_addr);
     let listener = TcpListener::bind(server_addr)
         .await
         .expect("failed to bind server");
 
-    let mut session_handler: Option<SessionHandler> = None;
+    let mut session_handler: Option<SessionHandle> = None;
 
     loop {
         let finished = session_handler
@@ -93,9 +81,10 @@ async fn run_transport(args: TransportServer) {
 
             Ok((stream, peer_addr)) = listener.accept() => {
                 handle_incoming_connection(
-                    tls_config.clone(),
                     &mut session_handler,
-                    stream, peer_addr
+                    stream,
+                    peer_addr,
+                    &tls_acceptor,
                 ).await
             },
         }
@@ -105,15 +94,17 @@ async fn run_transport(args: TransportServer) {
 // Handle incoming connection, create a new session if it's not exist, otherwise
 // drop the connection.
 async fn handle_incoming_connection(
-    tls_config: Arc<ServerConfig>,
-    session_handler: &mut Option<SessionHandler>,
+    session_handler: &mut Option<SessionHandle>,
     stream: TcpStream,
     peer_addr: SocketAddr,
+    tls_acceptor: &tokio_native_tls::TlsAcceptor,
 ) {
     info!(?peer_addr, "received incoming connection");
     if session_handler.is_none() {
-        let transporter = Transporter::Plain(Transport::new(stream));
-        let handler = spawn_session(tls_config, peer_addr, transporter);
+        let stream = tls_acceptor.accept(stream).await.unwrap();
+        let transport = Transport::new(stream);
+
+        let handler = spawn_session(peer_addr, transport);
         *session_handler = Some(handler);
     } else {
         info!(?peer_addr, "dropping incoming connection")
@@ -122,13 +113,13 @@ async fn handle_incoming_connection(
 
 /// Handler to a session.
 #[derive(Debug)]
-struct SessionHandler {
+struct SessionHandle {
     event_tx: mpsc::Sender<InputEvent>,
     task: JoinHandle<()>,
     state: Arc<Mutex<SessionState>>,
 }
 
-impl SessionHandler {
+impl SessionHandle {
     /// Send input event to this session.
     async fn send_event(&mut self, event: InputEvent) -> Result<(), SendError<InputEvent>> {
         self.event_tx.send(event).await?;
@@ -143,17 +134,15 @@ impl SessionHandler {
     fn is_connected(&self) -> bool {
         let state = self.state.lock().unwrap();
         match &*state {
-            SessionState::Handshaking => false,
             SessionState::Idle => true,
             SessionState::RelayingEvent { .. } => true,
         }
     }
 }
 
+#[derive(Debug)]
 struct Session {
-    tls_config: Arc<ServerConfig>,
-    peer_addr: SocketAddr,
-    transporter: ServerTransporter,
+    transport: ServerTransport,
     event_rx: mpsc::Receiver<InputEvent>,
     state: Arc<Mutex<SessionState>>,
 }
@@ -161,7 +150,6 @@ struct Session {
 #[derive(Clone, Copy, Default, Debug)]
 enum SessionState {
     #[default]
-    Handshaking,
     Idle,
     RelayingEvent {
         event: InputEvent,
@@ -169,19 +157,13 @@ enum SessionState {
 }
 
 /// Creates a new session.
-fn spawn_session(
-    tls_config: Arc<ServerConfig>,
-    peer_addr: SocketAddr,
-    transporter: ServerTransporter,
-) -> SessionHandler {
+fn spawn_session(peer_addr: SocketAddr, transport: ServerTransport) -> SessionHandle {
     let (event_tx, event_rx) = mpsc::channel(1);
 
     let state: Arc<Mutex<SessionState>> = Default::default();
 
     let session = Session {
-        tls_config,
-        peer_addr,
-        transporter,
+        transport,
         event_rx,
         state: state.clone(),
     };
@@ -197,7 +179,7 @@ fn spawn_session(
         info!(?peer_addr, "disconnected from client");
     });
 
-    SessionHandler {
+    SessionHandle {
         event_tx,
         task,
         state,
@@ -207,9 +189,7 @@ fn spawn_session(
 /// The session loop.
 async fn run_session(session: Session) -> Result<(), Error> {
     let Session {
-        tls_config,
-        peer_addr,
-        mut transporter,
+        mut transport,
         mut event_rx,
         state: state_ref,
     } = session;
@@ -230,27 +210,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
         };
 
         let new_state = match state {
-            SessionState::Handshaking => {
-                debug!(?peer_addr, "upgrading to secure transport");
-
-                // upgrade to tls
-                transporter = {
-                    let tls_config = tls_config.clone();
-                    transporter
-                        .upgrade(move |stream| upgrade_server_stream(stream, tls_config))
-                        .await?
-                };
-
-                debug!(?peer_addr, "connection upgraded");
-
-                info!(?peer_addr, "session established");
-
-                SessionState::Idle
-            }
-
             SessionState::Idle => {
-                let transport = transporter.secure()?;
-
                 select! { biased;
 
                     _ = ping_ticker.tick() => {
@@ -308,13 +268,10 @@ async fn run_session(session: Session) -> Result<(), Error> {
             }
 
             SessionState::RelayingEvent { event } => {
-                let transport = transporter.secure()?;
-
                 transport
                     .send_msg(event.into())
                     .await
                     .context("failed to send message")?;
-
                 SessionState::Idle
             }
         };
@@ -327,40 +284,4 @@ async fn run_session(session: Session) -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-async fn upgrade_server_stream<S>(
-    stream: S,
-    tls_config: Arc<ServerConfig>,
-) -> Result<TlsStream<S>, Error>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let tls: TlsAcceptor = tls_config.into();
-
-    let stream = tls.accept(stream).await.context("tls accept failed")?;
-
-    Ok(stream.into())
-}
-
-fn create_server_tls_config(
-    server_certs: Vec<Certificate>,
-    server_key: PrivateKey,
-    client_cert: Certificate,
-) -> Result<ServerConfig, Error> {
-    let cert_verifier = Arc::new(SingleCertVerifier::new(client_cert));
-
-    let cfg = ServerConfig::builder()
-        .with_safe_defaults()
-        .with_client_cert_verifier(cert_verifier)
-        .with_single_cert(
-            server_certs
-                .into_iter()
-                .map(|x| tokio_rustls::rustls::Certificate(x.into()))
-                .collect(),
-            tokio_rustls::rustls::PrivateKey(server_key.into()),
-        )
-        .context("failed to create server config tls")?;
-
-    Ok(cfg)
 }

@@ -5,7 +5,10 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"slices"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -19,12 +22,14 @@ import (
 var slog = logging.NewLogger("terong/server")
 
 func Start(ctx context.Context) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT)
+
 	console, err := disableQuickEdit()
 	if err != nil {
 		slog.Error("failed to disable quick edit", "error", err)
 		return
 	}
-	defer console.restore()
 
 	cfg, err := config.ReadConfig()
 	if err != nil {
@@ -39,76 +44,103 @@ restart:
 
 	slog.Info("starting server", "config", cfg)
 	runCtx, cancelRun := context.WithCancel(ctx)
-	go run(runCtx, cfg)
+	runDone := run(runCtx, cfg)
 	defer cancelRun()
 
 	var ok bool
+loop:
 	for {
 		select {
+		case signal := <-signals:
+			slog.Info("signal received", "signal", signal)
+			break loop
+
 		case <-ctx.Done():
 			slog.Error("context error", "error", err)
-			return
+			break loop
+
+		case err := <-runDone:
+			slog.Error("error", "error", err)
+			break loop
 
 		case cfg, ok = <-watcher.Configs():
 			if !ok {
 				slog.Error("config watcher error", "error", watcher.Err())
-				return
+				break loop
 			}
 			slog.Info("configurations changed", "config", cfg)
 			cancelRun()
 			goto restart
 		}
 	}
+
+	slog.Debug("restoring console mode")
+	console.restore()
 }
 
-func run(ctx context.Context, cfg config.Config) {
-	source := inputsource.Start()
-	defer source.Stop()
+func run(ctx context.Context, cfg *config.Config) <-chan error {
+	done := make(chan error)
 
-	events := make(chan inputevent.InputEvent)
-	defer close(events)
+	go func() {
+		defer close(done)
 
-	transport := server.Start(ctx, fmt.Sprintf(":%d", cfg.Server.Port), events)
+		err := func() error {
+			source := inputsource.Start()
+			defer source.Stop()
 
-	relay := false
-	toggledAt := time.Time{}
+			events := make(chan inputevent.InputEvent)
+			defer close(events)
 
-	buffer := keyBuffer{}
-
-	source.SetEatInput(relay)
-	source.SetCaptureMouseMove(relay)
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Error("context error", "error", ctx.Err())
-			return
-
-		case input, ok := <-source.Inputs():
-			if !ok {
-				slog.Error("input source stopped", "error", source.Error())
-				return
+			transportCfg := &server.Config{
+				Addr:              fmt.Sprintf(":%d", cfg.Server.Port),
+				TLSCertPath:       cfg.Server.TLSCertPath,
+				TLSKeyPath:        cfg.Server.TLSKeyPath,
+				ClientTLSCertPath: cfg.Server.ClientTLSCertPath,
 			}
-			slog.Debug("input received", "input", input)
-			if relay {
-				events <- input
-			}
-			if v, ok := input.(inputevent.KeyPress); ok {
-				buffer.push(v)
-			}
-			if yes, at := buffer.toggleKeyStrokeExists(toggledAt); yes {
-				slog.Debug("toggling relay")
-				relay = !relay
-				toggledAt = at
-				source.SetEatInput(relay)
-				source.SetCaptureMouseMove(relay)
-			}
+			transport := server.Start(ctx, transportCfg, events)
 
-		case err := <-transport:
-			slog.Error("transport error", "error", err)
-			return
-		}
-	}
+			relay := false
+			toggledAt := time.Time{}
+
+			buffer := keyBuffer{}
+
+			source.SetEatInput(relay)
+			source.SetCaptureMouseMove(relay)
+
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+
+				case input, ok := <-source.Inputs():
+					if !ok {
+						return source.Error()
+					}
+					slog.Debug("input received", "input", input)
+					if relay {
+						events <- input
+					}
+					if v, ok := input.(inputevent.KeyPress); ok {
+						buffer.push(v)
+					}
+					if yes, at := buffer.toggleKeyStrokeExists(toggledAt); yes {
+						slog.Debug("toggling relay")
+						relay = !relay
+						toggledAt = at
+						source.SetEatInput(relay)
+						source.SetCaptureMouseMove(relay)
+					}
+
+				case err := <-transport:
+					return err
+				}
+			}
+		}()
+
+		done <- err
+	}()
+
+	return done
 }
 
 type keyBufferEntry struct {
@@ -163,7 +195,7 @@ func (b *keyBuffer) toggleKeyStrokeExists(after time.Time) (bool, time.Time) {
 }
 
 type console struct {
-	handle  windows.Handle
+	noop    bool
 	oldMode uint32
 }
 
@@ -172,6 +204,7 @@ func disableQuickEdit() (console, error) {
 	if err != nil {
 		return console{}, fmt.Errorf("failed to get handle: %v", err)
 	}
+	defer windows.CloseHandle(handle)
 
 	var mode uint32
 	err = windows.GetConsoleMode(handle, &mode)
@@ -179,19 +212,35 @@ func disableQuickEdit() (console, error) {
 		return console{}, fmt.Errorf("failed to get mode: %v", err)
 	}
 
-	newMode := mode & ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
-	err = windows.SetConsoleMode(handle, newMode)
-	if err != nil {
-		return console{}, fmt.Errorf("failed to set new mode: %v", err)
+	noop := true
+	if mode&windows.ENABLE_QUICK_EDIT_MODE > 0 {
+		noop = false
+		newMode := mode & ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
+		err = windows.SetConsoleMode(handle, newMode)
+		if err != nil {
+			return console{}, fmt.Errorf("failed to set new mode: %v", err)
+		}
 	}
 
-	return console{handle: handle, oldMode: mode}, nil
+	return console{noop: noop, oldMode: mode}, nil
 }
 
 func (c console) restore() error {
-	err := windows.SetConsoleMode(c.handle, c.oldMode)
+	if c.noop {
+		return nil
+	}
+
+	handle, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
+	if err != nil {
+		return fmt.Errorf("failed to get handle: %v", err)
+	}
+	defer windows.CloseHandle(handle)
+
+	slog.Debug("setting console mode to its old value")
+	err = windows.SetConsoleMode(handle, c.oldMode)
 	if err != nil {
 		return fmt.Errorf("failed to set mode: %v", err)
 	}
+
 	return nil
 }

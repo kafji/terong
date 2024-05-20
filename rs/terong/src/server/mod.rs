@@ -49,12 +49,11 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
 
         let args = TransportServer {
             port,
-            event_rx,
             tls_certs,
             tls_key,
             client_tls_certs,
         };
-        transport_server::start(args)
+        transport_server::start(args, event_rx)
     };
 
     try_join!(input_source, server).unwrap();

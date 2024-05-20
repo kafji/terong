@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
+	"os"
 
 	"github.com/fxamacker/cbor/v2"
 	"kafji.net/terong/inputevent"
@@ -14,21 +17,65 @@ import (
 
 var slog = logging.NewLogger("transport/server")
 
-func Start(ctx context.Context, addr string, inputs <-chan inputevent.InputEvent) <-chan error {
+type Config struct {
+	Addr              string
+	TLSCertPath       string
+	TLSKeyPath        string
+	ClientTLSCertPath string
+}
+
+func newTLSConfig(cfg *Config) (*tls.Config, error) {
+	cert, err := os.ReadFile(cfg.TLSCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tls cert: %v", err)
+	}
+
+	key, err := os.ReadFile(cfg.TLSKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tls key: %v", err)
+	}
+
+	keyPair, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse key pair: %v", err)
+	}
+
+	clientCert, err := os.ReadFile(cfg.ClientTLSCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read client cert: %v", err)
+	}
+
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(clientCert)
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{keyPair},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    pool,
+	}, nil
+}
+
+func Start(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) <-chan error {
 	done := make(chan error)
 	go func() {
-		err := run(ctx, addr, inputs)
+		err := run(ctx, cfg, inputs)
 		done <- err
 	}()
 	return done
 }
 
-func run(ctx context.Context, addr string, inputs <-chan inputevent.InputEvent) error {
-	slog.Info("listening for connection", "address", addr)
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", addr)
+func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) error {
+	tlsCfg, err := newTLSConfig(cfg)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("listening for connection", "address", cfg.Addr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %v", err)
 	}
+	listener = tls.NewListener(listener, tlsCfg)
 	defer listener.Close()
 
 	receptionist := newReceptionist(listener)

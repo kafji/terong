@@ -1,7 +1,7 @@
 # Development configurations
 /terong.toml
 /*.pem*
-/*.pem.bak*
+/*.pem
 
 # Artifacts
 /terong-client*

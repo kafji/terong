@@ -1,24 +1,18 @@
 pub mod protocol;
 
 use self::protocol::{ClientMessage, ServerMessage};
-use anyhow::{bail, Error};
+use anyhow::Error;
 use bytes::{Buf, BufMut, BytesMut};
-use futures::Future;
 use macross::newtype;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     convert::TryInto,
     fmt::{self, Debug},
     marker::PhantomData,
-    time::SystemTime,
+    pin::Pin,
 };
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio_rustls::rustls::{
-    self,
-    client::{ServerCertVerified, ServerCertVerifier},
-    server::{ClientCertVerified, ClientCertVerifier},
-    DistinguishedName, ServerName,
-};
+
 use tracing::debug;
 
 /// Protocol message marker trait.
@@ -55,20 +49,19 @@ async fn send_msg(
 }
 
 #[derive(Debug)]
-struct MessageReader<'a, S, B> {
-    src: &'a mut S,
+struct MessageReader<'a, B> {
+    src: &'a mut Pin<Box<dyn AsyncStream + Send>>,
     buf: &'a mut B,
 }
 
-impl<'a, S, B> MessageReader<'a, S, B> {
-    fn new(src: &'a mut S, buf: &'a mut B) -> Self {
+impl<'a, B> MessageReader<'a, B> {
+    fn new(src: &'a mut Pin<Box<dyn AsyncStream + Send>>, buf: &'a mut B) -> Self {
         Self { src, buf }
     }
 }
 
-impl<'a, S, B> MessageReader<'a, S, B>
+impl<'a, B> MessageReader<'a, B>
 where
-    S: AsyncRead + Unpin,
     B: Buf + BufMut,
 {
     /// Fill buffer until the specified size is reached.
@@ -115,10 +108,14 @@ where
     }
 }
 
+pub trait AsyncStream: AsyncRead + AsyncWrite + Debug {}
+
+impl<T: AsyncRead + AsyncWrite + Debug> AsyncStream for T {}
+
 #[derive(Debug)]
-pub struct Transport<S, IN, OUT> {
+pub struct Transport<IN, OUT> {
     /// The IO stream.
-    stream: S,
+    stream: Pin<Box<dyn AsyncStream + Send>>,
     read_buf: BytesMut,
     /// Incoming message data type.
     _in: PhantomData<IN>,
@@ -126,43 +123,20 @@ pub struct Transport<S, IN, OUT> {
     _out: PhantomData<OUT>,
 }
 
-impl<S, IN, OUT> Transport<S, IN, OUT> {
+impl<IN, OUT> Transport<IN, OUT> {
     /// Creates a new transport.
-    pub fn new(stream: S) -> Self {
+    pub fn new(stream: impl AsyncStream + Send + 'static) -> Self {
         Self {
-            stream,
+            stream: Box::pin(stream),
             read_buf: Default::default(),
             _in: PhantomData,
             _out: PhantomData,
         }
     }
-
-    /// Maps stream while keeping other internal data intact.
-    async fn try_map_stream<T, F, Fut>(self, map: F) -> Result<Transport<T, IN, OUT>, Error>
-    where
-        F: FnOnce(S) -> Fut,
-        Fut: Future<Output = Result<T, Error>>,
-    {
-        let Self {
-            stream,
-            read_buf,
-            _in,
-            _out,
-        } = self;
-        let stream = map(stream).await?;
-        let s = Transport {
-            stream,
-            read_buf,
-            _in,
-            _out,
-        };
-        Ok(s)
-    }
 }
 
-impl<S, IN, OUT> Transport<S, IN, OUT>
+impl<IN, OUT> Transport<IN, OUT>
 where
-    S: AsyncWrite + Unpin,
     OUT: Message + Debug,
 {
     /// Sends a protocol message.
@@ -173,12 +147,11 @@ where
     }
 }
 
-impl<S, IN, OUT> Transport<S, IN, OUT>
+impl<IN, OUT> Transport<IN, OUT>
 where
-    S: AsyncRead + Unpin,
     IN: Message + Debug,
 {
-    fn as_msg_reader(&mut self) -> MessageReader<S, BytesMut> {
+    fn as_msg_reader(&mut self) -> MessageReader<BytesMut> {
         MessageReader::new(&mut self.stream, &mut self.read_buf)
     }
 
@@ -188,50 +161,6 @@ where
     pub async fn recv_msg(&mut self) -> Result<IN, Error> {
         let mut reader = self.as_msg_reader();
         reader.recv_msg().await
-    }
-}
-
-/// Facilitates acquiring and upgrading [Transport].
-#[derive(Debug)]
-pub enum Transporter<PS /* plain stream */, SS /* secure stream */, IN, OUT> {
-    Plain(Transport<PS, IN, OUT>),
-    Secure(Transport<SS, IN, OUT>),
-}
-
-impl<PS, SS, IN, OUT> Transporter<PS, SS, IN, OUT> {
-    /// Mutably borrow plain transport.
-    pub fn plain(&mut self) -> Result<&mut Transport<PS, IN, OUT>, Error> {
-        if let Self::Plain(t) = self {
-            Ok(t)
-        } else {
-            bail!("expecting plain text transport, but was not")
-        }
-    }
-
-    /// Upgrades plain text transport to secure transport.
-    ///
-    /// Trying to upgrade secure transport will produce a runtime error.
-    pub async fn upgrade<F, Fut>(self, upgrader: F) -> Result<Self, Error>
-    where
-        F: FnOnce(PS) -> Fut,
-        Fut: Future<Output = Result<SS, Error>>,
-    {
-        match self {
-            Self::Plain(t) => {
-                let t = t.try_map_stream(upgrader).await?;
-                Ok(Self::Secure(t))
-            }
-            _ => bail!("expecting plain text transport, but was not"),
-        }
-    }
-
-    /// Mutably borrow secure transport.
-    pub fn secure(&mut self) -> Result<&mut Transport<SS, IN, OUT>, Error> {
-        if let Self::Secure(t) = self {
-            Ok(t)
-        } else {
-            bail!("expecting secure transport, but was not")
-        }
     }
 }
 
@@ -253,53 +182,4 @@ newtype! {
     /// TLS private key.
     #[derive(Clone, Debug)]
     pub PrivateKey = Vec<u8>;
-}
-
-/// Certifier for a single known certificate.
-#[derive(Clone, Debug)]
-pub struct SingleCertVerifier {
-    cert: Certificate,
-}
-
-impl SingleCertVerifier {
-    pub fn new(cert: Certificate) -> Self {
-        Self { cert }
-    }
-}
-
-impl ServerCertVerifier for SingleCertVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: SystemTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        if &end_entity.0 == self.cert.as_ref() {
-            Ok(ServerCertVerified::assertion())
-        } else {
-            Err(rustls::Error::General("invalid server certificate".into()))
-        }
-    }
-}
-
-impl ClientCertVerifier for SingleCertVerifier {
-    fn client_auth_root_subjects(&self) -> &[DistinguishedName] {
-        &[]
-    }
-
-    fn verify_client_cert(
-        &self,
-        end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _now: SystemTime,
-    ) -> Result<ClientCertVerified, rustls::Error> {
-        if &end_entity.0 == self.cert.as_ref() {
-            Ok(ClientCertVerified::assertion())
-        } else {
-            Err(rustls::Error::General("invalid client certificate".into()))
-        }
-    }
 }
