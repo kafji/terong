@@ -7,10 +7,7 @@ use crate::{
 };
 use anyhow::Error;
 use serde::Deserialize;
-use std::{
-    io::Cursor,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use tokio::{
     fs::{self, File},
     io::AsyncReadExt,
@@ -83,28 +80,12 @@ fn config_paths() -> impl Iterator<Item = PathBuf> {
 
 pub async fn read_certs(path: &Path) -> Result<Vec<Certificate>, Error> {
     let buf = fs::read(path).await?;
-    let mut buf = Cursor::new(buf);
-
-    let certs = rustls_pemfile::certs(&mut buf)?;
-
-    assert!(!certs.is_empty());
-
-    let certs = certs.into_iter().map(Into::into).collect();
-
-    Ok(certs)
+    Ok(vec![buf.into()])
 }
 
 pub async fn read_private_key(path: &Path) -> Result<PrivateKey, Error> {
     let buf = fs::read(path).await?;
-    let mut buf = Cursor::new(buf);
-
-    let keys = rustls_pemfile::pkcs8_private_keys(&mut buf)?;
-
-    let key = keys.into_iter().next().unwrap();
-
-    let key = key.into();
-
-    Ok(key)
+    Ok(buf.into())
 }
 
 #[cfg(test)]
