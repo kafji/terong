@@ -27,12 +27,12 @@ type Config struct {
 func newTLSConfig(cfg *Config) (*tls.Config, error) {
 	cert, err := os.ReadFile(cfg.TLSCertPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read tls cert: %v", err)
+		return nil, fmt.Errorf("failed to read tls cert file: %v", err)
 	}
 
 	key, err := os.ReadFile(cfg.TLSKeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read tls key: %v", err)
+		return nil, fmt.Errorf("failed to read tls key file: %v", err)
 	}
 
 	keyPair, err := tls.X509KeyPair(cert, key)
@@ -42,7 +42,7 @@ func newTLSConfig(cfg *Config) (*tls.Config, error) {
 
 	clientCert, err := os.ReadFile(cfg.ClientTLSCertPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read client cert: %v", err)
+		return nil, fmt.Errorf("failed to read client cert file: %v", err)
 	}
 
 	pool := x509.NewCertPool()
