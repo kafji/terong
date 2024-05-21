@@ -207,7 +207,6 @@ func runSession(ctx context.Context, sess *session) {
 					if err := sess.SendPing(); err != nil {
 						return fmt.Errorf("failed to write ping: %v", err)
 					}
-					sess.SetSendPingDeadline()
 
 				case <-sess.RecvPingDeadline():
 					return transport.ErrPingTimedOut
