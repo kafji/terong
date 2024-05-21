@@ -21,8 +21,7 @@ var slog = logging.NewLogger("terong/server")
 func Start(ctx context.Context) {
 	err := disableQuickEdit()
 	if err != nil {
-		slog.Error("failed to disable quick edit", "error", err)
-		return
+		slog.Warn("failed to disable quick edit", "error", err)
 	}
 
 	cfg, err := config.ReadConfig()
@@ -191,7 +190,7 @@ func disableQuickEdit() error {
 	mode &= ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
 	err = windows.SetConsoleMode(handle, mode)
 	if err != nil {
-		return nil
+		return fmt.Errorf("failed to set mode: %v", err)
 	}
 
 	return nil

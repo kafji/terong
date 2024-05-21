@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -33,6 +34,9 @@ func Watch(ctx context.Context) *Watcher {
 		}
 		defer watcher.Close()
 
+		// Where did that bring you? Back to me. - RxJava
+		var debounce <-chan time.Time
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -52,9 +56,12 @@ func Watch(ctx context.Context) *Watcher {
 					return
 				}
 				slog.Debug("watcher event", "event", event)
-				if !event.Op.Has(fsnotify.Write) || event.Name != "terong.toml" {
+				if !event.Has(fsnotify.Write) || event.Name != "terong.toml" {
 					continue
 				}
+				debounce = time.After(3 * time.Second)
+
+			case <-debounce:
 				slog.Debug("reading config")
 				cfg, err := ReadConfig()
 				if err != nil {
@@ -63,6 +70,7 @@ func Watch(ctx context.Context) *Watcher {
 				}
 				slog.Debug("sending config")
 				w.cfgs <- cfg
+				debounce = nil
 			}
 		}
 	}()
@@ -73,12 +81,11 @@ func Watch(ctx context.Context) *Watcher {
 func createWatcher() (*fsnotify.Watcher, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create watcher: %v", err)
 	}
 	err = watcher.Add("./terong.toml")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to add path: %v", err)
 	}
-
 	return watcher, nil
 }
