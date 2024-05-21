@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -21,10 +22,9 @@ const (
 )
 
 const (
-	PingInterval   = 15 * time.Second
-	PingTimeout    = PingInterval + 5*time.Second
+	PingTimeout    = 10 * time.Second
 	ConnectTimeout = 5 * time.Second
-	ReconnectDelay = 10 * time.Second
+	ReconnectDelay = 5 * time.Second
 	WriteTimeout   = 100 * time.Millisecond
 )
 
@@ -171,6 +171,9 @@ func NewSession(conn net.Conn) *Session {
 		}
 	}()
 
+	s.SetSendPingDeadline()
+	s.SetRecvPingDeadline()
+
 	return s
 }
 
@@ -182,10 +185,11 @@ func (s *Session) InboxErr() error {
 	return s.inboxErr
 }
 
-func (s *Session) ResetSendPingDeadline() {
+func (s *Session) SetSendPingDeadline() {
 	ch := make(chan struct{}, 1)
 	go func() {
-		time.After(time.Until(time.Now().Add(PingInterval)))
+		d := PingTimeout/2 + time.Duration(rand.Intn(int(PingTimeout/time.Second/2)))
+		time.Sleep(d)
 		ch <- struct{}{}
 	}()
 	s.sendPingDeadline = ch
@@ -195,10 +199,10 @@ func (s *Session) SendPingDeadline() <-chan struct{} {
 	return s.sendPingDeadline
 }
 
-func (s *Session) ResetRecvPingDeadline() {
+func (s *Session) SetRecvPingDeadline() {
 	ch := make(chan struct{}, 1)
 	go func() {
-		time.After(time.Until(time.Now().Add(PingTimeout)))
+		time.Sleep(PingTimeout)
 		ch <- struct{}{}
 	}()
 	s.recvPingDeadline = ch
@@ -230,7 +234,7 @@ func (s *Session) SendPing() error {
 	if err := s.WritePing(); err != nil {
 		return err
 	}
-	s.ResetSendPingDeadline()
+	s.SetSendPingDeadline()
 	return nil
 }
 

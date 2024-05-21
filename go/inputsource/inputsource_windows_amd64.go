@@ -141,14 +141,18 @@ func run(handle *Handle) error {
 		// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmessagew
 		var msg C.MSG
 		ret := C.get_message(&msg)
-		if ret == 0 {
-			return nil
-		}
 		if ret < 0 {
 			return windows.GetLastError()
 		}
-
-		slog.Debug("message received", "message", msg, "mouse_hook_proc_worst_ms", C.get_mouse_hook_proc_worst(), "keyboard_hook_proc_worst_ms", C.get_keyboard_hook_proc_worst())
+		slog.Debug(
+			"message received",
+			"message", msg,
+			"mouse_hook_proc_worst_ms", C.get_mouse_hook_proc_worst(),
+			"keyboard_hook_proc_worst_ms", C.get_keyboard_hook_proc_worst(),
+		)
+		if ret == 0 {
+			return nil
+		}
 
 		switch msg.message {
 		case C.MESSAGE_CODE_HOOK_EVENT:

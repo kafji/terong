@@ -207,6 +207,7 @@ func runSession(ctx context.Context, sess *session) {
 					if err := sess.SendPing(); err != nil {
 						return fmt.Errorf("failed to write ping: %v", err)
 					}
+					sess.SetSendPingDeadline()
 
 				case <-sess.RecvPingDeadline():
 					return transport.ErrPingTimedOut
@@ -218,7 +219,7 @@ func runSession(ctx context.Context, sess *session) {
 					switch frm.Tag {
 					case transport.TagPing:
 						slog.Debug("ping received")
-						sess.ResetRecvPingDeadline()
+						sess.SetRecvPingDeadline()
 					default:
 						slog.Warn("unexpected tag", "tag", frm.Tag)
 					}
