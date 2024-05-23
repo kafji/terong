@@ -109,7 +109,7 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 			}
 
 			slog.Info("connected to server", "address", conn.RemoteAddr())
-			sess = newSession(conn)
+			sess = newSession(ctx, conn)
 			slog.Info("session established", "address", conn.RemoteAddr())
 			runSession(ctx, sess, h.inputs)
 			err = <-sess.done
@@ -135,9 +135,9 @@ type session struct {
 	done chan error
 }
 
-func newSession(conn net.Conn) *session {
+func newSession(ctx context.Context, conn net.Conn) *session {
 	return &session{
-		Session: transport.NewSession(conn),
+		Session: transport.NewSession(ctx, conn),
 		done:    make(chan error, 1),
 	}
 }

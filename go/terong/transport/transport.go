@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -147,32 +148,39 @@ type Session struct {
 	sendPingDeadline chan struct{}
 	recvPingDeadline chan struct{}
 
-	inbox    chan Frame
-	inboxErr error
+	inbox       chan Frame
+	inboxErr    error
+	cancelInbox context.CancelFunc
 }
 
 func EmptySession() *Session {
 	return &Session{closed: true}
 }
 
-func NewSession(conn net.Conn) *Session {
-	s := &Session{conn: conn, inbox: make(chan Frame)}
+func NewSession(ctx context.Context, conn net.Conn) *Session {
+	inbox := make(chan Frame)
+	inboxCtx, cancelInbox := context.WithCancel(ctx)
+	s := &Session{conn: conn, inbox: inbox, cancelInbox: cancelInbox}
+	s.SetSendPingDeadline()
+	s.SetRecvPingDeadline()
 
 	go func() {
 		defer close(s.inbox)
-
-		for {
-			frm, err := s.ReadFrame()
-			if err != nil {
-				s.inboxErr = err
-				return
+		err := func() error {
+			for {
+				frm, err := s.ReadFrame()
+				if err != nil {
+					return err
+				}
+				select {
+				case <-inboxCtx.Done():
+					return inboxCtx.Err()
+				case s.inbox <- frm:
+				}
 			}
-			s.inbox <- frm
-		}
+		}()
+		s.inboxErr = err
 	}()
-
-	s.SetSendPingDeadline()
-	s.SetRecvPingDeadline()
 
 	return s
 }
@@ -239,6 +247,7 @@ func (s *Session) SendPing() error {
 }
 
 func (s *Session) Close() {
+	defer s.cancelInbox()
 	if s.closed {
 		return
 	}

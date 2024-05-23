@@ -102,7 +102,7 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 				}
 				continue
 			}
-			sess = newSession(conn)
+			sess = newSession(ctx, conn)
 			slog.Info("session established", "address", conn.RemoteAddr())
 			runSession(ctx, sess)
 
@@ -159,9 +159,9 @@ func emptySession() *session {
 	return &session{Session: transport.EmptySession()}
 }
 
-func newSession(conn net.Conn) *session {
+func newSession(ctx context.Context, conn net.Conn) *session {
 	return &session{
-		Session: transport.NewSession(conn),
+		Session: transport.NewSession(ctx, conn),
 		inputs:  make(chan inputevent.InputEvent, 1),
 		done:    make(chan error, 1),
 	}
