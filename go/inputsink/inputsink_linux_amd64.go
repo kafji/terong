@@ -14,7 +14,6 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"syscall"
 	"unsafe"
 
@@ -96,7 +95,6 @@ func start(ctx context.Context, source <-chan inputevent.InputEvent) error {
 	}
 	defer C.libevdev_uinput_destroy(uinput)
 
-loop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -161,14 +159,11 @@ loop:
 			for _, event := range events {
 				ret := C.libevdev_uinput_write_event(uinput, event.type_, event.code, event.value)
 				if err := evdevError(ret); err != nil {
-					slog.Error("failed to write event", "error", err)
-					break loop
+					return fmt.Errorf("failed to write event: %v", err)
 				}
 			}
 		}
 	}
-
-	return nil
 }
 
 func evdevError(returnValue C.int) error {
@@ -192,16 +187,12 @@ func mouseButtonToEvKey(button inputevent.MouseButton) C.uint {
 	switch button {
 	case inputevent.MouseButtonLeft:
 		evKey = C.BTN_LEFT
-
 	case inputevent.MouseButtonRight:
 		evKey = C.BTN_RIGHT
-
 	case inputevent.MouseButtonMiddle:
 		evKey = C.BTN_MIDDLE
-
 	case inputevent.MouseButtonMouse4:
 		evKey = C.BTN_SIDE
-
 	case inputevent.MouseButtonMouse5:
 		evKey = C.BTN_EXTRA
 	}
