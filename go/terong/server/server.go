@@ -103,14 +103,13 @@ func run(ctx context.Context, cfg *config.Config) <-chan error {
 					}
 					if v, ok := input.(inputevent.KeyPress); ok {
 						buffer.push(v)
+						if yes, at := buffer.toggleKeyStrokeExists(toggledAt); yes {
+							slog.Debug("toggling relay")
+							relay = !relay
+							toggledAt = at
+							source.SetCaptureInputs(relay)
+						}
 					}
-					if yes, at := buffer.toggleKeyStrokeExists(toggledAt); yes {
-						slog.Debug("toggling relay")
-						relay = !relay
-						toggledAt = at
-						source.SetCaptureInputs(relay)
-					}
-
 				case err := <-transport:
 					return err
 				}

@@ -27,8 +27,6 @@ type Handle struct {
 
 	inputs        chan inputevent.InputEvent
 	captureInputs bool
-	screenCenter  point
-	cursorPos     *C.POINT
 }
 
 func Start() *Handle {
@@ -106,15 +104,20 @@ func run(handle *Handle) error {
 	}
 	defer C.UnhookWindowsHookEx(keyboardHook)
 
-	handle.screenCenter, err = screenCenter()
+	normalizer := inputevent.Normalizer{}
+
+	screenCenter, err := screenCenter()
 	if err != nil {
 		return err
 	}
 
-	normalizer := inputevent.Normalizer{}
+	var oldCursorPos *C.POINT
+
+	var oldMouseHookProcWorst uint64
+	var oldKeyboardHookProcWorst uint64
 
 	// https://learn.microsoft.com/en-us/windows/win32/winmsg/using-messages-and-message-queues
-	for {
+	for count := uint(1); ; count++ {
 		// Achtung!
 		//
 		// This message loop must never be blocked.
@@ -126,16 +129,9 @@ func run(handle *Handle) error {
 		// 1. Sending to unbuffered channel.
 		// 2. Writing to stdio + QuickEdit.
 
+		// in case previous loop produce error
 		if err := windows.GetLastError(); err != nil {
 			return err
-		}
-
-		if handle.captureInputs {
-			// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursorpos
-			ret := C.SetCursorPos(C.int(handle.screenCenter.x), C.int(handle.screenCenter.y))
-			if ret == 0 {
-				return windows.GetLastError()
-			}
 		}
 
 		// https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmessagew
@@ -144,14 +140,23 @@ func run(handle *Handle) error {
 		if ret < 0 {
 			return windows.GetLastError()
 		}
-		slog.Debug(
-			"message received",
-			"message", msg,
-			"mouse_hook_proc_worst_ms", C.get_mouse_hook_proc_worst(),
-			"keyboard_hook_proc_worst_ms", C.get_keyboard_hook_proc_worst(),
-		)
 		if ret == 0 {
 			return nil
+		}
+
+		// sample every hundred or so messages
+		if count%128 == 0 {
+			mouseWorst := uint64(C.get_mouse_hook_proc_worst())
+			if mouseWorst > 50 && mouseWorst > oldMouseHookProcWorst {
+				slog.Warn("mouse hook proc worst latency increased", "latency_ms", mouseWorst)
+				oldMouseHookProcWorst = mouseWorst
+			}
+
+			keyboardWorst := uint64(C.get_keyboard_hook_proc_worst())
+			if keyboardWorst > 50 && keyboardWorst > oldKeyboardHookProcWorst {
+				slog.Warn("keyboard hook proc worst latency increased", "latency_ms", keyboardWorst)
+				oldKeyboardHookProcWorst = keyboardWorst
+			}
 		}
 
 		switch msg.message {
@@ -166,8 +171,8 @@ func run(handle *Handle) error {
 						continue
 					}
 					data := (*C.mouse_move_t)(unsafe.Pointer(&hookEvent.data))
-					dx := data.x - C.LONG(handle.screenCenter.x)
-					dy := -(data.y - C.LONG(handle.screenCenter.y))
+					dx := data.x - C.LONG(screenCenter.x)
+					dy := -(data.y - C.LONG(screenCenter.y))
 					input = inputevent.MouseMove{DX: int16(dx), DY: int16(dy)}
 
 				case C.WM_LBUTTONDOWN:
@@ -260,13 +265,20 @@ func run(handle *Handle) error {
 			}
 			C.set_eat_input(C.BOOL(msg.wParam))
 			if handle.captureInputs {
-				handle.cursorPos = &C.POINT{}
-				ret := C.GetCursorPos(handle.cursorPos)
+				// capture current mouse position
+				oldCursorPos = &C.POINT{}
+				ret := C.GetCursorPos(oldCursorPos)
 				if ret == 0 {
 					return windows.GetLastError()
 				}
-			} else if handle.cursorPos != nil {
-				ret := C.SetCursorPos(C.int(handle.cursorPos.x), C.int(handle.cursorPos.y))
+				// set mouse position to center of screen
+				ret = C.SetCursorPos(C.int(screenCenter.x), C.int(screenCenter.y))
+				if ret == 0 {
+					return windows.GetLastError()
+				}
+			} else if oldCursorPos != nil {
+				// restore previous mouse position
+				ret := C.SetCursorPos(C.int(oldCursorPos.x), C.int(oldCursorPos.y))
 				if ret == 0 {
 					return windows.GetLastError()
 				}

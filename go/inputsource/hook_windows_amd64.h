@@ -1,6 +1,8 @@
 #ifndef HOOK
 #define HOOK
 
+#include <stdint.h>
+
 #define MESSAGE_CODE_HOOK_EVENT WM_APP
 #define MESSAGE_CODE_CONTROL_COMMAND WM_APP + 1
 #define MESSAGE_CODE_SET_CAPTURE_INPUTS WM_APP + 2
