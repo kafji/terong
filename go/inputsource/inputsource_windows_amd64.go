@@ -282,6 +282,7 @@ func run(handle *Handle) error {
 				if ret == 0 {
 					return windows.GetLastError()
 				}
+				oldCursorPos = nil
 			}
 		} // switch
 	} // for
