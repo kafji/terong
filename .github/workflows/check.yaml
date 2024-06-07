@@ -34,7 +34,7 @@ jobs:
         run: cargo test
 
       - name: Build
-        working-directory: ./rs
+        working-directory: ./rs/terong
         run: .\build.bat
 
   rust-linux:
@@ -64,7 +64,7 @@ jobs:
         run: cargo test
 
       - name: Build
-        working-directory: ./rs
+        working-directory: ./rs/terong
         run: ./build.sh
 
   go-windows:
