@@ -7,11 +7,8 @@ on:
   pull_request:
 
 jobs:
-  rust:
-    strategy:
-      matrix:
-        runner: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.runner }}
+  rust-windows:
+    runs-on: windows-latest
     timeout-minutes: 5
     env:
       RUST_BACKTRACE: full
@@ -35,6 +32,40 @@ jobs:
       - name: Test
         working-directory: ./rs
         run: cargo test
+
+      - name: Build
+        working-directory: ./rs
+        run: .\build.bat
+
+  rust-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RUST_BACKTRACE: full
+      RUST_LOG: debug
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore Cargo cache
+        uses: actions/cache@v3
+        with:
+          # https://doc.rust-lang.org/cargo/guide/cargo-home.html#caching-the-cargo-home-in-ci
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-${{ runner.os }}-${{ hashFiles('./Cargo.toml', './Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}
+
+      - name: Test
+        working-directory: ./rs
+        run: cargo test
+
+      - name: Build
+        working-directory: ./rs
+        run: ./build.sh
 
   go-windows:
     runs-on: windows-latest
