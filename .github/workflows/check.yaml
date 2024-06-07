@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  check:
+  rust-test:
     strategy:
       matrix:
         runner: [ubuntu-latest, windows-latest]
@@ -35,3 +35,47 @@ jobs:
       - name: Test
         working-directory: ./rs
         run: cargo test
+
+  go-test:
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+
+      - name: Test
+        working-directory: ./go
+        run: go test ./...
+
+  go-build-windows:
+    needs: go-test
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+
+      - name: Build
+        working-directory: ./go
+        run: build.bat
+
+  go-build-linux:
+    needs: go-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+
+      - name: Install libevdev
+        run: sudo apt-get -y install libevdev-dev
+
+      - name: Build
+        working-directory: ./go
+        run: build.sh
