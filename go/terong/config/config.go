@@ -32,12 +32,16 @@ type Client struct {
 }
 
 func ReadConfig() (*Config, error) {
-	var c Config
 	file, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
-	err = toml.Unmarshal(file, &c)
+	return readConfigString(string(file))
+}
+
+func readConfigString(s string) (*Config, error) {
+	var c Config
+	err := toml.Unmarshal([]byte(s), &c)
 	if err != nil {
 		return nil, err
 	}
