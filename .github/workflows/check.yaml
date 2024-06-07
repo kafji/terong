@@ -50,7 +50,7 @@ jobs:
 
       - name: Build
         working-directory: ./go
-        run: build.bat
+        run: .\build.bat
 
   go-linux:
     runs-on: ubuntu-latest
@@ -69,4 +69,4 @@ jobs:
 
       - name: Build
         working-directory: ./go
-        run: build.sh
+        run: ./build.sh
