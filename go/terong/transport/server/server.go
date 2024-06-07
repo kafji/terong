@@ -162,7 +162,7 @@ func emptySession() *session {
 func newSession(ctx context.Context, conn net.Conn) *session {
 	return &session{
 		Session: transport.NewSession(ctx, conn),
-		inputs:  make(chan inputevent.InputEvent, 1),
+		inputs:  make(chan inputevent.InputEvent),
 		done:    make(chan error, 1),
 	}
 }

@@ -30,7 +30,7 @@ type Handle struct {
 }
 
 func Start() *Handle {
-	h := &Handle{inputs: make(chan inputevent.InputEvent, 1_000)}
+	h := &Handle{inputs: make(chan inputevent.InputEvent, 10_000)}
 	h.mu.Lock() // lock 'a
 	go func() {
 		runtime.LockOSThread()
