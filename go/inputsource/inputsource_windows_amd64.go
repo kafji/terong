@@ -2,7 +2,6 @@ package inputsource
 
 /*
 #cgo CFLAGS: -Wall -g -O2
-#include <windows.h>
 #include "hook_windows_amd64.h"
 */
 import "C"

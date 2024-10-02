@@ -1,7 +1,7 @@
 #ifndef HOOK
 #define HOOK
 
-#include <stdint.h>
+#include <windows.h>
 
 #define MESSAGE_CODE_HOOK_EVENT WM_APP
 #define MESSAGE_CODE_CONTROL_COMMAND WM_APP + 1
@@ -9,39 +9,33 @@
 
 #define CONTROL_COMMAND_STOP 1
 
-typedef struct
-{
-    LONG x;
-    LONG y;
+typedef struct {
+  LONG x;
+  LONG y;
 } mouse_move_t;
 
-typedef struct
-{
-    WORD button;
+typedef struct {
+  WORD button;
 } mouse_click_t;
 
-typedef struct
-{
-    SHORT distance;
+typedef struct {
+  SHORT distance;
 } mouse_scroll_t;
 
-typedef struct
-{
-    DWORD virtual_key;
+typedef struct {
+  DWORD virtual_key;
 } key_press_t;
 
-typedef union
-{
-    mouse_move_t mouse_move;
-    mouse_click_t mouse_click;
-    mouse_scroll_t mouse_scroll;
-    key_press_t key_press;
+typedef union {
+  mouse_move_t mouse_move;
+  mouse_click_t mouse_click;
+  mouse_scroll_t mouse_scroll;
+  key_press_t key_press;
 } hook_event_data_t;
 
-typedef struct
-{
-    WPARAM code;
-    hook_event_data_t data;
+typedef struct {
+  WPARAM code;
+  hook_event_data_t data;
 } hook_event_t;
 
 hook_event_t *get_hook_event();
