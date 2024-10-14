@@ -1,3 +1,3 @@
-This directory hosts these projects:
+# Terong (Rust)
 
-- [Terong](./terong), a KVM switch software.
+Deprecated.
