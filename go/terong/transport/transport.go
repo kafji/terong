@@ -143,6 +143,7 @@ func readFrame(r io.Reader) (Frame, error) {
 type Session struct {
 	conn net.Conn
 	w    *bufio.Writer
+	r    *bufio.Reader
 
 	mu     sync.Mutex
 	closed bool
@@ -165,6 +166,7 @@ func NewSession(ctx context.Context, conn net.Conn) *Session {
 	s := &Session{
 		conn:        conn,
 		w:           bufio.NewWriter(conn),
+		r:           bufio.NewReader(conn),
 		inbox:       inbox,
 		cancelInbox: cancelInbox,
 	}
@@ -253,7 +255,7 @@ func (s *Session) WritePing() error {
 }
 
 func (s *Session) ReadFrame() (Frame, error) {
-	return readFrame(s.conn)
+	return readFrame(s.r)
 }
 
 func (s *Session) SendPing() error {
