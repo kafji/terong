@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -59,11 +60,11 @@ func TagFor(v any) (Tag, error) {
 	return 0, errors.New("unexpected type")
 }
 
-func WriteTag(w io.Writer, tag Tag) error {
+func writeTag(w io.Writer, tag Tag) error {
 	return writeUint16(w, uint16(tag))
 }
 
-func WriteLength(w io.Writer, length uint16) error {
+func writeLength(w io.Writer, length uint16) error {
 	return writeUint16(w, length)
 }
 
@@ -72,12 +73,12 @@ func writeUint16(w io.Writer, v uint16) error {
 	return err
 }
 
-func ReadTag(r io.Reader) (Tag, error) {
+func readTag(r io.Reader) (Tag, error) {
 	tag, err := readUint16(r)
 	return Tag(tag), err
 }
 
-func ReadLength(r io.Reader) (uint16, error) {
+func readLength(r io.Reader) (uint16, error) {
 	return readUint16(r)
 }
 
@@ -96,13 +97,13 @@ type Frame struct {
 	Value  []byte
 }
 
-func WriteFrame(w io.Writer, frm Frame) error {
-	err := WriteTag(w, frm.Tag)
+func writeFrame(w io.Writer, frm Frame) error {
+	err := writeTag(w, frm.Tag)
 	if err != nil {
 		return fmt.Errorf("failed to write tag: %v", err)
 	}
 
-	err = WriteLength(w, frm.Length)
+	err = writeLength(w, frm.Length)
 	if err != nil {
 		return fmt.Errorf("failed to write length: %v", err)
 	}
@@ -115,13 +116,13 @@ func WriteFrame(w io.Writer, frm Frame) error {
 	return nil
 }
 
-func ReadFrame(r io.Reader) (Frame, error) {
-	tag, err := ReadTag(r)
+func readFrame(r io.Reader) (Frame, error) {
+	tag, err := readTag(r)
 	if err != nil {
 		return Frame{}, fmt.Errorf("failed to read tag: %v", err)
 	}
 
-	length, err := ReadLength(r)
+	length, err := readLength(r)
 	if err != nil {
 		return Frame{}, fmt.Errorf("failed to read length: %v", err)
 	}
@@ -141,6 +142,7 @@ func ReadFrame(r io.Reader) (Frame, error) {
 
 type Session struct {
 	conn net.Conn
+	w    *bufio.Writer
 
 	mu     sync.Mutex
 	closed bool
@@ -160,7 +162,12 @@ func EmptySession() *Session {
 func NewSession(ctx context.Context, conn net.Conn) *Session {
 	inbox := make(chan Frame)
 	inboxCtx, cancelInbox := context.WithCancel(ctx)
-	s := &Session{conn: conn, inbox: inbox, cancelInbox: cancelInbox}
+	s := &Session{
+		conn:        conn,
+		w:           bufio.NewWriter(conn),
+		inbox:       inbox,
+		cancelInbox: cancelInbox,
+	}
 	s.SetSendPingDeadline()
 	s.SetRecvPingDeadline()
 
@@ -223,10 +230,21 @@ func (s *Session) RecvPingDeadline() <-chan struct{} {
 func (s *Session) WriteFrame(frm Frame) error {
 	t := time.Now().Add(WriteTimeout)
 	err := s.conn.SetWriteDeadline(t)
-	if err != err {
+	if err != nil {
 		return fmt.Errorf("failed to set write deadline: %v", err)
 	}
-	return WriteFrame(s.conn, frm)
+
+	err = writeFrame(s.w, frm)
+	if err != nil {
+		return fmt.Errorf("failed to write to buffer: %v", err)
+	}
+
+	err = s.w.Flush()
+	if err != nil {
+		return fmt.Errorf("failed to flush buffer: %v", err)
+	}
+
+	return nil
 }
 
 func (s *Session) WritePing() error {
@@ -235,7 +253,7 @@ func (s *Session) WritePing() error {
 }
 
 func (s *Session) ReadFrame() (Frame, error) {
-	return ReadFrame(s.conn)
+	return readFrame(s.conn)
 }
 
 func (s *Session) SendPing() error {
