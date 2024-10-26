@@ -3,11 +3,9 @@ package inputsink
 /*
 #cgo pkg-config: libevdev
 #cgo CFLAGS: -Wall -g -O2
+#include "proxy_linux_amd64.h"
 #include <stdlib.h>
 #include <string.h>
-#include <libevdev/libevdev.h>
-#include <libevdev/libevdev-uinput.h>
-#include <linux/input.h>
 */
 import "C"
 
@@ -105,75 +103,86 @@ func start(ctx context.Context, source <-chan inputevent.InputEvent) error {
 			return ctx.Err()
 
 		case input := <-source:
-			t := time.Now()
-			events := make([]evdevEvent, 0)
-
-			switch v := input.(type) {
-			case inputevent.MouseMove:
-				events = append(
-					events,
-					evdevEvent{
-						type_: C.EV_REL,
-						code:  C.REL_X,
-						value: C.int(v.DX),
-					},
-					evdevEvent{
-						type_: C.EV_REL,
-						code:  C.REL_Y,
-						value: C.int(-v.DY),
-					},
-				)
-
-			case inputevent.MouseClick:
-				event := evdevEvent{type_: C.EV_KEY}
-				event.code = mouseButtonToEvKey(v.Button)
-				switch v.Action {
-				case inputevent.MouseButtonActionDown:
-					event.value = 1
-				case inputevent.MouseButtonActionUp:
-					event.value = 0
-				}
-				events = append(events, event)
-
-			case inputevent.MouseScroll:
-				event := evdevEvent{type_: C.EV_REL, code: C.REL_WHEEL}
-				switch v.Direction {
-				case inputevent.MouseScrollUp:
-					event.value = C.int(v.Count)
-				case inputevent.MouseScrollDown:
-					event.value = -C.int(v.Count)
-				}
-				events = append(events, event)
-
-			case inputevent.KeyPress:
-				event := evdevEvent{type_: C.EV_KEY}
-				event.code = keyCodeToEvKey(v.Key)
-				switch v.Action {
-				case inputevent.KeyActionDown:
-					event.value = 1
-				case inputevent.KeyActionRepeat:
-					event.value = 2
-				case inputevent.KeyActionUp:
-					event.value = 0
-				}
-				events = append(events, event)
+			err := writeInput(uinput, input)
+			if err != nil {
+				return err
 			}
-
-			events = append(events, evdevEvent{type_: C.EV_SYN, code: C.SYN_REPORT, value: 0})
-			d := time.Since(t)
-			slog.Debug("map input values", "duration_ns", d.Nanoseconds())
-
-			t = time.Now()
-			for _, event := range events {
-				ret := C.libevdev_uinput_write_event(uinput, event.type_, event.code, event.value)
-				if err := evdevError(ret); err != nil {
-					return fmt.Errorf("failed to write event: %v", err)
-				}
-			}
-			d = time.Since(t)
-			slog.Debug("write uinput events", "duration_ns", d.Nanoseconds())
 		}
 	}
+}
+
+func writeInput(uinput *C.struct_libevdev_uinput, input inputevent.InputEvent) error {
+	t := time.Now()
+
+	events := make([]C.event_t, 0)
+
+	switch v := input.(type) {
+	case inputevent.MouseMove:
+		events = append(
+			events,
+			C.event_t{
+				_type: C.EV_REL,
+				code:  C.REL_X,
+				value: C.int(v.DX),
+			},
+			C.event_t{
+				_type: C.EV_REL,
+				code:  C.REL_Y,
+				value: C.int(-v.DY),
+			},
+		)
+
+	case inputevent.MouseClick:
+		event := C.event_t{_type: C.EV_KEY}
+		event.code = mouseButtonToEvKey(v.Button)
+		switch v.Action {
+		case inputevent.MouseButtonActionDown:
+			event.value = 1
+		case inputevent.MouseButtonActionUp:
+			event.value = 0
+		}
+		events = append(events, event)
+
+	case inputevent.MouseScroll:
+		event := C.event_t{_type: C.EV_REL, code: C.REL_WHEEL}
+		switch v.Direction {
+		case inputevent.MouseScrollUp:
+			event.value = C.int(v.Count)
+		case inputevent.MouseScrollDown:
+			event.value = -C.int(v.Count)
+		}
+		events = append(events, event)
+
+	case inputevent.KeyPress:
+		event := C.event_t{_type: C.EV_KEY}
+		event.code = keyCodeToEvKey(v.Key)
+		switch v.Action {
+		case inputevent.KeyActionDown:
+			event.value = 1
+		case inputevent.KeyActionRepeat:
+			event.value = 2
+		case inputevent.KeyActionUp:
+			event.value = 0
+		}
+		events = append(events, event)
+	}
+
+	events = append(events, C.event_t{_type: C.EV_SYN, code: C.SYN_REPORT, value: 0})
+
+	d := time.Since(t)
+	slog.Debug("map input values", "duration_ns", d.Nanoseconds())
+
+	t = time.Now()
+
+	ret := C.write_events(uinput, C.size_t(len(events)), &events[0])
+	if err := evdevError(ret); err != nil {
+		return fmt.Errorf("failed to write event: %v", err)
+	}
+
+	d = time.Since(t)
+	slog.Debug("write uinput events", "duration_ns", d.Nanoseconds())
+
+	return nil
 }
 
 func evdevError(returnValue C.int) error {
