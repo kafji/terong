@@ -15,14 +15,18 @@ import (
 	"context"
 	"fmt"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 	"kafji.net/terong/inputevent"
+	"kafji.net/terong/logging"
 )
 
 // https://www.freedesktop.org/software/libevdev/doc/latest/libevdev_8h.html
 // https://www.freedesktop.org/software/libevdev/doc/latest/libevdev-uinput_8h.html
+
+var slog = logging.NewLogger("terong/inputsink")
 
 func createEvdevDevice() (*C.struct_libevdev, error) {
 	dev := C.libevdev_new()
@@ -101,6 +105,7 @@ func start(ctx context.Context, source <-chan inputevent.InputEvent) error {
 			return ctx.Err()
 
 		case input := <-source:
+			t := time.Now()
 			events := make([]evdevEvent, 0)
 
 			switch v := input.(type) {
@@ -155,13 +160,18 @@ func start(ctx context.Context, source <-chan inputevent.InputEvent) error {
 			}
 
 			events = append(events, evdevEvent{type_: C.EV_SYN, code: C.SYN_REPORT, value: 0})
+			d := time.Since(t)
+			slog.Debug("map input values", "duration_ns", d.Nanoseconds())
 
+			t = time.Now()
 			for _, event := range events {
 				ret := C.libevdev_uinput_write_event(uinput, event.type_, event.code, event.value)
 				if err := evdevError(ret); err != nil {
 					return fmt.Errorf("failed to write event: %v", err)
 				}
 			}
+			d = time.Since(t)
+			slog.Debug("write uinput events", "duration_ns", d.Nanoseconds())
 		}
 	}
 }
