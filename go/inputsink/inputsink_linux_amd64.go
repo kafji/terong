@@ -195,12 +195,6 @@ func evdevError(returnValue C.int) error {
 	return fmt.Errorf("%s %d %s", name, errno, desc)
 }
 
-type evdevEvent struct {
-	type_ C.uint
-	code  C.uint
-	value C.int
-}
-
 func mouseButtonToEvKey(button inputevent.MouseButton) C.uint {
 	var evKey C.uint
 	switch button {
