@@ -45,7 +45,7 @@ loop:
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Error("context error", "error", err)
+			slog.Error("context error", "error", context.Cause(ctx))
 			break loop
 
 		case err := <-runDone:

@@ -82,6 +82,9 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 
 	sess := emptySession()
 	defer func() {
+		if sess == nil {
+			return
+		}
 		sess.Close()
 	}()
 
