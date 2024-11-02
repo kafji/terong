@@ -50,12 +50,12 @@ func createEvdevDevice() (*C.struct_libevdev, error) {
 
 	codes[C.EV_REL] = append(codes[C.EV_REL], C.REL_X, C.REL_Y, C.REL_WHEEL)
 
-	for _, b := range inputevent.MouseButtons() {
+	for _, b := range inputevent.MouseButtons {
 		code := mouseButtonToEvKey(b)
 		codes[C.EV_KEY] = append(codes[C.EV_KEY], code)
 	}
 
-	for _, c := range inputevent.KeyCodes() {
+	for _, c := range inputevent.KeyCodes {
 		code := keyCodeToEvKey(c)
 		codes[C.EV_KEY] = append(codes[C.EV_KEY], code)
 	}

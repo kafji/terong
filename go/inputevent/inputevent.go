@@ -1,7 +1,5 @@
 package inputevent
 
-import "sync"
-
 type InputEvent interface {
 	inputEvent()
 }
@@ -45,14 +43,6 @@ const (
 	mouseButtonMajorant
 )
 
-var MouseButtons = sync.OnceValue(func() []MouseButton {
-	xs := make([]MouseButton, 0)
-	for i := mouseButtonMinorant + 1; i < mouseButtonMajorant; i++ {
-		xs = append(xs, i)
-	}
-	return xs
-})
-
 type MouseButtonAction uint8
 
 const (
@@ -85,7 +75,9 @@ const (
 type KeyCode uint16
 
 const (
-	Escape KeyCode = iota + 1
+	keyCodeMinorant KeyCode = iota
+
+	Escape
 
 	// function keys
 
@@ -196,15 +188,9 @@ const (
 	Left
 	Down
 	Right
-)
 
-var KeyCodes = sync.OnceValue(func() []KeyCode {
-	xs := make([]KeyCode, 0)
-	for i := Escape; i <= Right; i++ {
-		xs = append(xs, i)
-	}
-	return xs
-})
+	keyCodeMajorant
+)
 
 type Normalizer struct {
 	prev InputEvent
@@ -229,4 +215,18 @@ func (n *Normalizer) Normalize(event InputEvent) InputEvent {
 	}
 
 	return KeyPress{Key: this.Key, Action: KeyActionRepeat}
+}
+
+var MouseButtons = []MouseButton{}
+
+var KeyCodes = []KeyCode{}
+
+func init() {
+	for x := mouseButtonMinorant + 1; x < mouseButtonMajorant; x++ {
+		MouseButtons = append(MouseButtons, x)
+	}
+
+	for x := keyCodeMinorant + 1; x < keyCodeMajorant; x++ {
+		KeyCodes = append(KeyCodes, x)
+	}
 }
