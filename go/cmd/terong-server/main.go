@@ -31,8 +31,8 @@ func main() {
 	signal.Notify(s, syscall.SIGINT)
 	go func() {
 		<-s
-		pprof.StopCPUProfile()
 		cancel(errors.New("SIGINT"))
+		pprof.StopCPUProfile()
 	}()
 
 	server.Start(ctx)
