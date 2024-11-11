@@ -224,14 +224,14 @@ func run(handle *Handle) error {
 					fallthrough
 				case C.WM_SYSKEYDOWN:
 					data := (*C.key_press_t)(unsafe.Pointer(&hookEvent.data))
-					key := keyCodeToVirtualKey(data.virtual_key)
+					key := keyCodeToVirtualKey[data.virtual_key]
 					input = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionDown}
 
 				case C.WM_KEYUP:
 					fallthrough
 				case C.WM_SYSKEYUP:
 					data := (*C.key_press_t)(unsafe.Pointer(&hookEvent.data))
-					key := keyCodeToVirtualKey(data.virtual_key)
+					key := keyCodeToVirtualKey[data.virtual_key]
 					input = inputevent.KeyPress{Key: key, Action: inputevent.KeyActionUp}
 				}
 			}
@@ -322,205 +322,114 @@ func xbuttonToMouseButton(xbutton C.WORD) inputevent.MouseButton {
 	return button
 }
 
-// keyCodeToVirtualKey converts Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes to [inputevent.KeyCode].
-func keyCodeToVirtualKey(virtualKey C.DWORD) inputevent.KeyCode {
+// Table to convert Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes to [inputevent.KeyCode].
+var keyCodeToVirtualKey = make([]inputevent.KeyCode, 0xFF)
 
-	// todo(kfj): codegen?
+func init() {
+	keyCodeToVirtualKey[C.VK_ESCAPE] = inputevent.Escape
 
-	switch virtualKey {
-	case C.VK_ESCAPE:
-		return inputevent.Escape
+	keyCodeToVirtualKey[C.VK_F1] = inputevent.F1
+	keyCodeToVirtualKey[C.VK_F2] = inputevent.F2
+	keyCodeToVirtualKey[C.VK_F3] = inputevent.F3
+	keyCodeToVirtualKey[C.VK_F4] = inputevent.F4
+	keyCodeToVirtualKey[C.VK_F5] = inputevent.F5
+	keyCodeToVirtualKey[C.VK_F6] = inputevent.F6
+	keyCodeToVirtualKey[C.VK_F7] = inputevent.F7
+	keyCodeToVirtualKey[C.VK_F8] = inputevent.F8
+	keyCodeToVirtualKey[C.VK_F9] = inputevent.F9
+	keyCodeToVirtualKey[C.VK_F10] = inputevent.F10
+	keyCodeToVirtualKey[C.VK_F11] = inputevent.F11
+	keyCodeToVirtualKey[C.VK_F12] = inputevent.F12
 
-	case C.VK_F1:
-		return inputevent.F1
-	case C.VK_F2:
-		return inputevent.F2
-	case C.VK_F3:
-		return inputevent.F3
-	case C.VK_F4:
-		return inputevent.F4
-	case C.VK_F5:
-		return inputevent.F5
-	case C.VK_F6:
-		return inputevent.F6
-	case C.VK_F7:
-		return inputevent.F7
-	case C.VK_F8:
-		return inputevent.F8
-	case C.VK_F9:
-		return inputevent.F9
-	case C.VK_F10:
-		return inputevent.F10
-	case C.VK_F11:
-		return inputevent.F11
-	case C.VK_F12:
-		return inputevent.F12
+	keyCodeToVirtualKey[C.VK_SNAPSHOT] = inputevent.PrintScreen
+	keyCodeToVirtualKey[C.VK_SCROLL] = inputevent.ScrollLock
+	keyCodeToVirtualKey[C.VK_PAUSE] = inputevent.PauseBreak
 
-	case C.VK_SNAPSHOT:
-		return inputevent.PrintScreen
-	case C.VK_SCROLL:
-		return inputevent.ScrollLock
-	case C.VK_PAUSE:
-		return inputevent.PauseBreak
+	keyCodeToVirtualKey[C.VK_OEM_3] = inputevent.Grave
 
-	case C.VK_OEM_3:
-		return inputevent.Grave
+	keyCodeToVirtualKey[0x31] = inputevent.D1
+	keyCodeToVirtualKey[0x32] = inputevent.D2
+	keyCodeToVirtualKey[0x33] = inputevent.D3
+	keyCodeToVirtualKey[0x34] = inputevent.D4
+	keyCodeToVirtualKey[0x35] = inputevent.D5
+	keyCodeToVirtualKey[0x36] = inputevent.D6
+	keyCodeToVirtualKey[0x37] = inputevent.D7
+	keyCodeToVirtualKey[0x38] = inputevent.D8
+	keyCodeToVirtualKey[0x39] = inputevent.D9
+	keyCodeToVirtualKey[0x30] = inputevent.D0
 
-	case 0x31:
-		return inputevent.D1
-	case 0x32:
-		return inputevent.D2
-	case 0x33:
-		return inputevent.D3
-	case 0x34:
-		return inputevent.D4
-	case 0x35:
-		return inputevent.D5
-	case 0x36:
-		return inputevent.D6
-	case 0x37:
-		return inputevent.D7
-	case 0x38:
-		return inputevent.D8
-	case 0x39:
-		return inputevent.D9
-	case 0x30:
-		return inputevent.D0
+	keyCodeToVirtualKey[C.VK_OEM_MINUS] = inputevent.Minus
+	keyCodeToVirtualKey[C.VK_OEM_PLUS] = inputevent.Equal
 
-	case C.VK_OEM_MINUS:
-		return inputevent.Minus
-	case C.VK_OEM_PLUS:
-		return inputevent.Equal
+	keyCodeToVirtualKey[0x41] = inputevent.A
+	keyCodeToVirtualKey[0x42] = inputevent.B
+	keyCodeToVirtualKey[0x43] = inputevent.C
+	keyCodeToVirtualKey[0x44] = inputevent.D
+	keyCodeToVirtualKey[0x45] = inputevent.E
+	keyCodeToVirtualKey[0x46] = inputevent.F
+	keyCodeToVirtualKey[0x47] = inputevent.G
+	keyCodeToVirtualKey[0x48] = inputevent.H
+	keyCodeToVirtualKey[0x49] = inputevent.I
+	keyCodeToVirtualKey[0x4A] = inputevent.J
+	keyCodeToVirtualKey[0x4B] = inputevent.K
+	keyCodeToVirtualKey[0x4C] = inputevent.L
+	keyCodeToVirtualKey[0x4D] = inputevent.M
+	keyCodeToVirtualKey[0x4E] = inputevent.N
+	keyCodeToVirtualKey[0x4F] = inputevent.O
+	keyCodeToVirtualKey[0x50] = inputevent.P
+	keyCodeToVirtualKey[0x51] = inputevent.Q
+	keyCodeToVirtualKey[0x52] = inputevent.R
+	keyCodeToVirtualKey[0x53] = inputevent.S
+	keyCodeToVirtualKey[0x54] = inputevent.T
+	keyCodeToVirtualKey[0x55] = inputevent.U
+	keyCodeToVirtualKey[0x56] = inputevent.V
+	keyCodeToVirtualKey[0x57] = inputevent.W
+	keyCodeToVirtualKey[0x58] = inputevent.X
+	keyCodeToVirtualKey[0x59] = inputevent.Y
+	keyCodeToVirtualKey[0x5A] = inputevent.Z
 
-	case 0x41:
-		return inputevent.A
-	case 0x42:
-		return inputevent.B
-	case 0x43:
-		return inputevent.C
-	case 0x44:
-		return inputevent.D
-	case 0x45:
-		return inputevent.E
-	case 0x46:
-		return inputevent.F
-	case 0x47:
-		return inputevent.G
-	case 0x48:
-		return inputevent.H
-	case 0x49:
-		return inputevent.I
-	case 0x4A:
-		return inputevent.J
-	case 0x4B:
-		return inputevent.K
-	case 0x4C:
-		return inputevent.L
-	case 0x4D:
-		return inputevent.M
-	case 0x4E:
-		return inputevent.N
-	case 0x4F:
-		return inputevent.O
-	case 0x50:
-		return inputevent.P
-	case 0x51:
-		return inputevent.Q
-	case 0x52:
-		return inputevent.R
-	case 0x53:
-		return inputevent.S
-	case 0x54:
-		return inputevent.T
-	case 0x55:
-		return inputevent.U
-	case 0x56:
-		return inputevent.V
-	case 0x57:
-		return inputevent.W
-	case 0x58:
-		return inputevent.X
-	case 0x59:
-		return inputevent.Y
-	case 0x5A:
-		return inputevent.Z
+	keyCodeToVirtualKey[C.VK_OEM_4] = inputevent.LeftBrace
+	keyCodeToVirtualKey[C.VK_OEM_6] = inputevent.RightBrace
 
-	case C.VK_OEM_4:
-		return inputevent.LeftBrace
-	case C.VK_OEM_6:
-		return inputevent.RightBrace
+	keyCodeToVirtualKey[C.VK_OEM_1] = inputevent.SemiColon
+	keyCodeToVirtualKey[C.VK_OEM_7] = inputevent.Apostrophe
 
-	case C.VK_OEM_1:
-		return inputevent.SemiColon
-	case C.VK_OEM_7:
-		return inputevent.Apostrophe
+	keyCodeToVirtualKey[C.VK_OEM_COMMA] = inputevent.Comma
+	keyCodeToVirtualKey[C.VK_OEM_PERIOD] = inputevent.Dot
+	keyCodeToVirtualKey[C.VK_OEM_2] = inputevent.Slash
 
-	case C.VK_OEM_COMMA:
-		return inputevent.Comma
-	case C.VK_OEM_PERIOD:
-		return inputevent.Dot
-	case C.VK_OEM_2:
-		return inputevent.Slash
+	keyCodeToVirtualKey[C.VK_BACK] = inputevent.Backspace
+	keyCodeToVirtualKey[C.VK_OEM_5] = inputevent.BackSlash
+	keyCodeToVirtualKey[C.VK_RETURN] = inputevent.Enter
 
-	case C.VK_BACK:
-		return inputevent.Backspace
-	case C.VK_OEM_5:
-		return inputevent.BackSlash
-	case C.VK_RETURN:
-		return inputevent.Enter
+	keyCodeToVirtualKey[C.VK_SPACE] = inputevent.Space
 
-	case C.VK_SPACE:
-		return inputevent.Space
+	keyCodeToVirtualKey[C.VK_TAB] = inputevent.Tab
+	keyCodeToVirtualKey[C.VK_CAPITAL] = inputevent.CapsLock
 
-	case C.VK_TAB:
-		return inputevent.Tab
-	case C.VK_CAPITAL:
-		return inputevent.CapsLock
+	keyCodeToVirtualKey[C.VK_LSHIFT] = inputevent.LeftShift
+	keyCodeToVirtualKey[C.VK_RSHIFT] = inputevent.RightShift
 
-	case C.VK_LSHIFT:
-		return inputevent.LeftShift
-	case C.VK_RSHIFT:
-		return inputevent.RightShift
+	keyCodeToVirtualKey[C.VK_LCONTROL] = inputevent.LeftCtrl
+	keyCodeToVirtualKey[C.VK_RCONTROL] = inputevent.RightCtrl
 
-	case C.VK_LCONTROL:
-		return inputevent.LeftCtrl
-	case C.VK_RCONTROL:
-		return inputevent.RightCtrl
+	keyCodeToVirtualKey[C.VK_LMENU] = inputevent.LeftAlt
+	keyCodeToVirtualKey[C.VK_RMENU] = inputevent.RightAlt
 
-	case C.VK_LMENU:
-		return inputevent.LeftAlt
-	case C.VK_RMENU:
-		return inputevent.RightAlt
+	keyCodeToVirtualKey[C.VK_LWIN] = inputevent.LeftMeta
+	keyCodeToVirtualKey[C.VK_RWIN] = inputevent.RightMeta
 
-	case C.VK_LWIN:
-		return inputevent.LeftMeta
-	case C.VK_RWIN:
-		return inputevent.RightMeta
+	keyCodeToVirtualKey[C.VK_INSERT] = inputevent.Insert
+	keyCodeToVirtualKey[C.VK_DELETE] = inputevent.Delete
 
-	case C.VK_INSERT:
-		return inputevent.Insert
-	case C.VK_DELETE:
-		return inputevent.Delete
+	keyCodeToVirtualKey[C.VK_HOME] = inputevent.Home
+	keyCodeToVirtualKey[C.VK_END] = inputevent.End
 
-	case C.VK_HOME:
-		return inputevent.Home
-	case C.VK_END:
-		return inputevent.End
+	keyCodeToVirtualKey[C.VK_PRIOR] = inputevent.PageUp
+	keyCodeToVirtualKey[C.VK_NEXT] = inputevent.PageDown
 
-	case C.VK_PRIOR:
-		return inputevent.PageUp
-	case C.VK_NEXT:
-		return inputevent.PageDown
-
-	case C.VK_UP:
-		return inputevent.Up
-	case C.VK_LEFT:
-		return inputevent.Left
-	case C.VK_DOWN:
-		return inputevent.Down
-	case C.VK_RIGHT:
-		return inputevent.Right
-	}
-
-	return 0
+	keyCodeToVirtualKey[C.VK_UP] = inputevent.Up
+	keyCodeToVirtualKey[C.VK_LEFT] = inputevent.Left
+	keyCodeToVirtualKey[C.VK_DOWN] = inputevent.Down
+	keyCodeToVirtualKey[C.VK_RIGHT] = inputevent.Right
 }
