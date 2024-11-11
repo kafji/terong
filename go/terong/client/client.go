@@ -21,17 +21,11 @@ func Start(ctx context.Context) {
 		return
 	}
 
-	watcher := config.Watch(ctx)
-
-restart:
 	logging.SetLogLevel(cfg.LogLevel)
 
 	slog.Info("starting client", "config", cfg)
-	runCtx, cancelRun := context.WithCancel(ctx)
-	runDone := run(runCtx, cfg)
-	defer cancelRun()
+	runDone := run(ctx, cfg)
 
-	var ok bool
 	for {
 		select {
 		case <-ctx.Done():
@@ -41,15 +35,6 @@ restart:
 		case err := <-runDone:
 			slog.Error("error", "error", err)
 			return
-
-		case cfg, ok = <-watcher.Configs():
-			if !ok {
-				slog.Error("config watcher error", "error", watcher.Err())
-				return
-			}
-			slog.Info("configurations changed", "config", cfg)
-			cancelRun()
-			goto restart
 		}
 	}
 }
