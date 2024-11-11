@@ -10,10 +10,15 @@ import (
 	"runtime/pprof"
 	"syscall"
 
+	"kafji.net/terong/logging"
 	"kafji.net/terong/terong/client"
 )
 
+var slog = logging.NewLogger("terong-client/main")
+
 func main() {
+	slog.Info("starting", "GODEBUG", os.Getenv("GODEBUG"))
+
 	f, err := os.Create("terong-client.prof")
 	if err != nil {
 		panic(err)
