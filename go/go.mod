@@ -4,10 +4,10 @@ go 1.23.0
 
 require (
 	github.com/BurntSushi/toml v1.4.0
-	github.com/fsnotify/fsnotify v1.7.0
+	github.com/fsnotify/fsnotify v1.8.0
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/stretchr/testify v1.9.0
-	golang.org/x/sys v0.26.0
+	golang.org/x/sys v0.27.0
 )
 
 require (
