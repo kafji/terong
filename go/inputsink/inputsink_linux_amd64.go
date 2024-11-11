@@ -51,12 +51,12 @@ func createEvdevDevice() (*C.struct_libevdev, error) {
 	codes[C.EV_REL] = append(codes[C.EV_REL], C.REL_X, C.REL_Y, C.REL_WHEEL)
 
 	for _, b := range inputevent.MouseButtons {
-		code := mouseButtonToEvKey(b)
+		code := mouseButtonToEvKey[b]
 		codes[C.EV_KEY] = append(codes[C.EV_KEY], code)
 	}
 
 	for _, c := range inputevent.KeyCodes {
-		code := keyCodeToEvKey(c)
+		code := keyCodeToEvKey[c]
 		codes[C.EV_KEY] = append(codes[C.EV_KEY], code)
 	}
 
@@ -134,7 +134,7 @@ func writeInput(uinput *C.struct_libevdev_uinput, input inputevent.InputEvent) e
 
 	case inputevent.MouseClick:
 		event := C.event_t{_type: C.EV_KEY}
-		event.code = mouseButtonToEvKey(v.Button)
+		event.code = mouseButtonToEvKey[v.Button]
 		switch v.Action {
 		case inputevent.MouseButtonActionDown:
 			event.value = 1
@@ -155,7 +155,7 @@ func writeInput(uinput *C.struct_libevdev_uinput, input inputevent.InputEvent) e
 
 	case inputevent.KeyPress:
 		event := C.event_t{_type: C.EV_KEY}
-		event.code = keyCodeToEvKey(v.Key)
+		event.code = keyCodeToEvKey[v.Key]
 		switch v.Action {
 		case inputevent.KeyActionDown:
 			event.value = 1
@@ -195,218 +195,122 @@ func evdevError(returnValue C.int) error {
 	return fmt.Errorf("%s %d %s", name, errno, desc)
 }
 
-func mouseButtonToEvKey(button inputevent.MouseButton) C.uint {
-	var evKey C.uint
-	switch button {
-	case inputevent.MouseButtonLeft:
-		evKey = C.BTN_LEFT
-	case inputevent.MouseButtonRight:
-		evKey = C.BTN_RIGHT
-	case inputevent.MouseButtonMiddle:
-		evKey = C.BTN_MIDDLE
-	case inputevent.MouseButtonMouse4:
-		evKey = C.BTN_SIDE
-	case inputevent.MouseButtonMouse5:
-		evKey = C.BTN_EXTRA
-	}
-	return evKey
-}
+var (
+	mouseButtonToEvKey = make([]C.uint, inputevent.MouseButtonMouse5+1)
+	keyCodeToEvKey     = make([]C.uint, inputevent.Right+1)
+)
 
-func keyCodeToEvKey(code inputevent.KeyCode) C.uint {
-	var evKey C.uint
-	switch code {
-	case inputevent.Escape:
-		evKey = C.KEY_ESC
+func init() {
+	mouseButtonToEvKey[inputevent.MouseButtonLeft] = C.BTN_LEFT
+	mouseButtonToEvKey[inputevent.MouseButtonRight] = C.BTN_RIGHT
+	mouseButtonToEvKey[inputevent.MouseButtonMiddle] = C.BTN_MIDDLE
+	mouseButtonToEvKey[inputevent.MouseButtonMouse4] = C.BTN_SIDE
+	mouseButtonToEvKey[inputevent.MouseButtonMouse5] = C.BTN_EXTRA
 
-	case inputevent.F1:
-		evKey = C.KEY_F1
-	case inputevent.F2:
-		evKey = C.KEY_F2
-	case inputevent.F3:
-		evKey = C.KEY_F3
-	case inputevent.F4:
-		evKey = C.KEY_F4
-	case inputevent.F5:
-		evKey = C.KEY_F5
-	case inputevent.F6:
-		evKey = C.KEY_F6
-	case inputevent.F7:
-		evKey = C.KEY_F7
-	case inputevent.F8:
-		evKey = C.KEY_F8
-	case inputevent.F9:
-		evKey = C.KEY_F9
-	case inputevent.F10:
-		evKey = C.KEY_F10
-	case inputevent.F11:
-		evKey = C.KEY_F11
-	case inputevent.F12:
-		evKey = C.KEY_F12
+	keyCodeToEvKey[inputevent.Escape] = C.KEY_ESC
 
-	case inputevent.PrintScreen:
-		evKey = C.KEY_PRINT
-	case inputevent.ScrollLock:
-		evKey = C.KEY_SCROLLLOCK
-	case inputevent.PauseBreak:
-		evKey = C.KEY_PAUSE
+	keyCodeToEvKey[inputevent.F1] = C.KEY_F1
+	keyCodeToEvKey[inputevent.F2] = C.KEY_F2
+	keyCodeToEvKey[inputevent.F3] = C.KEY_F3
+	keyCodeToEvKey[inputevent.F4] = C.KEY_F4
+	keyCodeToEvKey[inputevent.F5] = C.KEY_F5
+	keyCodeToEvKey[inputevent.F6] = C.KEY_F6
+	keyCodeToEvKey[inputevent.F7] = C.KEY_F7
+	keyCodeToEvKey[inputevent.F8] = C.KEY_F8
+	keyCodeToEvKey[inputevent.F9] = C.KEY_F9
+	keyCodeToEvKey[inputevent.F10] = C.KEY_F10
+	keyCodeToEvKey[inputevent.F11] = C.KEY_F11
+	keyCodeToEvKey[inputevent.F12] = C.KEY_F12
 
-	case inputevent.Grave:
-		evKey = C.KEY_GRAVE
+	keyCodeToEvKey[inputevent.PrintScreen] = C.KEY_PRINT
+	keyCodeToEvKey[inputevent.ScrollLock] = C.KEY_SCROLLLOCK
+	keyCodeToEvKey[inputevent.PauseBreak] = C.KEY_PAUSE
 
-	case inputevent.D1:
-		evKey = C.KEY_1
-	case inputevent.D2:
-		evKey = C.KEY_2
-	case inputevent.D3:
-		evKey = C.KEY_3
-	case inputevent.D4:
-		evKey = C.KEY_4
-	case inputevent.D5:
-		evKey = C.KEY_5
-	case inputevent.D6:
-		evKey = C.KEY_6
-	case inputevent.D7:
-		evKey = C.KEY_7
-	case inputevent.D8:
-		evKey = C.KEY_8
-	case inputevent.D9:
-		evKey = C.KEY_9
-	case inputevent.D0:
-		evKey = C.KEY_0
+	keyCodeToEvKey[inputevent.Grave] = C.KEY_GRAVE
 
-	case inputevent.Minus:
-		evKey = C.KEY_MINUS
-	case inputevent.Equal:
-		evKey = C.KEY_EQUAL
+	keyCodeToEvKey[inputevent.D1] = C.KEY_1
+	keyCodeToEvKey[inputevent.D2] = C.KEY_2
+	keyCodeToEvKey[inputevent.D3] = C.KEY_3
+	keyCodeToEvKey[inputevent.D4] = C.KEY_4
+	keyCodeToEvKey[inputevent.D5] = C.KEY_5
+	keyCodeToEvKey[inputevent.D6] = C.KEY_6
+	keyCodeToEvKey[inputevent.D7] = C.KEY_7
+	keyCodeToEvKey[inputevent.D8] = C.KEY_8
+	keyCodeToEvKey[inputevent.D9] = C.KEY_9
+	keyCodeToEvKey[inputevent.D0] = C.KEY_0
 
-	case inputevent.A:
-		evKey = C.KEY_A
-	case inputevent.B:
-		evKey = C.KEY_B
-	case inputevent.C:
-		evKey = C.KEY_C
-	case inputevent.D:
-		evKey = C.KEY_D
-	case inputevent.E:
-		evKey = C.KEY_E
-	case inputevent.F:
-		evKey = C.KEY_F
-	case inputevent.G:
-		evKey = C.KEY_G
-	case inputevent.H:
-		evKey = C.KEY_H
-	case inputevent.I:
-		evKey = C.KEY_I
-	case inputevent.J:
-		evKey = C.KEY_J
-	case inputevent.K:
-		evKey = C.KEY_K
-	case inputevent.L:
-		evKey = C.KEY_L
-	case inputevent.M:
-		evKey = C.KEY_M
-	case inputevent.N:
-		evKey = C.KEY_N
-	case inputevent.O:
-		evKey = C.KEY_O
-	case inputevent.P:
-		evKey = C.KEY_P
-	case inputevent.Q:
-		evKey = C.KEY_Q
-	case inputevent.R:
-		evKey = C.KEY_R
-	case inputevent.S:
-		evKey = C.KEY_S
-	case inputevent.T:
-		evKey = C.KEY_T
-	case inputevent.U:
-		evKey = C.KEY_U
-	case inputevent.V:
-		evKey = C.KEY_V
-	case inputevent.W:
-		evKey = C.KEY_W
-	case inputevent.X:
-		evKey = C.KEY_X
-	case inputevent.Y:
-		evKey = C.KEY_Y
-	case inputevent.Z:
-		evKey = C.KEY_Z
+	keyCodeToEvKey[inputevent.Minus] = C.KEY_MINUS
+	keyCodeToEvKey[inputevent.Equal] = C.KEY_EQUAL
 
-	case inputevent.LeftBrace:
-		evKey = C.KEY_LEFTBRACE
-	case inputevent.RightBrace:
-		evKey = C.KEY_RIGHTBRACE
+	keyCodeToEvKey[inputevent.A] = C.KEY_A
+	keyCodeToEvKey[inputevent.B] = C.KEY_B
+	keyCodeToEvKey[inputevent.C] = C.KEY_C
+	keyCodeToEvKey[inputevent.D] = C.KEY_D
+	keyCodeToEvKey[inputevent.E] = C.KEY_E
+	keyCodeToEvKey[inputevent.F] = C.KEY_F
+	keyCodeToEvKey[inputevent.G] = C.KEY_G
+	keyCodeToEvKey[inputevent.H] = C.KEY_H
+	keyCodeToEvKey[inputevent.I] = C.KEY_I
+	keyCodeToEvKey[inputevent.J] = C.KEY_J
+	keyCodeToEvKey[inputevent.K] = C.KEY_K
+	keyCodeToEvKey[inputevent.L] = C.KEY_L
+	keyCodeToEvKey[inputevent.M] = C.KEY_M
+	keyCodeToEvKey[inputevent.N] = C.KEY_N
+	keyCodeToEvKey[inputevent.O] = C.KEY_O
+	keyCodeToEvKey[inputevent.P] = C.KEY_P
+	keyCodeToEvKey[inputevent.Q] = C.KEY_Q
+	keyCodeToEvKey[inputevent.R] = C.KEY_R
+	keyCodeToEvKey[inputevent.S] = C.KEY_S
+	keyCodeToEvKey[inputevent.T] = C.KEY_T
+	keyCodeToEvKey[inputevent.U] = C.KEY_U
+	keyCodeToEvKey[inputevent.V] = C.KEY_V
+	keyCodeToEvKey[inputevent.W] = C.KEY_W
+	keyCodeToEvKey[inputevent.X] = C.KEY_X
+	keyCodeToEvKey[inputevent.Y] = C.KEY_Y
+	keyCodeToEvKey[inputevent.Z] = C.KEY_Z
 
-	case inputevent.SemiColon:
-		evKey = C.KEY_SEMICOLON
-	case inputevent.Apostrophe:
-		evKey = C.KEY_APOSTROPHE
+	keyCodeToEvKey[inputevent.LeftBrace] = C.KEY_LEFTBRACE
+	keyCodeToEvKey[inputevent.RightBrace] = C.KEY_RIGHTBRACE
 
-	case inputevent.Comma:
-		evKey = C.KEY_COMMA
-	case inputevent.Dot:
-		evKey = C.KEY_DOT
-	case inputevent.Slash:
-		evKey = C.KEY_SLASH
+	keyCodeToEvKey[inputevent.SemiColon] = C.KEY_SEMICOLON
+	keyCodeToEvKey[inputevent.Apostrophe] = C.KEY_APOSTROPHE
 
-	case inputevent.Backspace:
-		evKey = C.KEY_BACKSPACE
-	case inputevent.BackSlash:
-		evKey = C.KEY_BACKSLASH
-	case inputevent.Enter:
-		evKey = C.KEY_ENTER
+	keyCodeToEvKey[inputevent.Comma] = C.KEY_COMMA
+	keyCodeToEvKey[inputevent.Dot] = C.KEY_DOT
+	keyCodeToEvKey[inputevent.Slash] = C.KEY_SLASH
 
-	case inputevent.Space:
-		evKey = C.KEY_SPACE
+	keyCodeToEvKey[inputevent.Backspace] = C.KEY_BACKSPACE
+	keyCodeToEvKey[inputevent.BackSlash] = C.KEY_BACKSLASH
+	keyCodeToEvKey[inputevent.Enter] = C.KEY_ENTER
 
-	case inputevent.Tab:
-		evKey = C.KEY_TAB
-	case inputevent.CapsLock:
-		evKey = C.KEY_CAPSLOCK
+	keyCodeToEvKey[inputevent.Space] = C.KEY_SPACE
 
-	case inputevent.LeftShift:
-		evKey = C.KEY_LEFTSHIFT
-	case inputevent.RightShift:
-		evKey = C.KEY_RIGHTSHIFT
+	keyCodeToEvKey[inputevent.Tab] = C.KEY_TAB
+	keyCodeToEvKey[inputevent.CapsLock] = C.KEY_CAPSLOCK
 
-	case inputevent.LeftCtrl:
-		evKey = C.KEY_LEFTCTRL
-	case inputevent.RightCtrl:
-		evKey = C.KEY_RIGHTCTRL
+	keyCodeToEvKey[inputevent.LeftShift] = C.KEY_LEFTSHIFT
+	keyCodeToEvKey[inputevent.RightShift] = C.KEY_RIGHTSHIFT
 
-	case inputevent.LeftAlt:
-		evKey = C.KEY_LEFTALT
-	case inputevent.RightAlt:
-		evKey = C.KEY_RIGHTALT
+	keyCodeToEvKey[inputevent.LeftCtrl] = C.KEY_LEFTCTRL
+	keyCodeToEvKey[inputevent.RightCtrl] = C.KEY_RIGHTCTRL
 
-	case inputevent.LeftMeta:
-		evKey = C.KEY_LEFTMETA
-	case inputevent.RightMeta:
-		evKey = C.KEY_RIGHTMETA
+	keyCodeToEvKey[inputevent.LeftAlt] = C.KEY_LEFTALT
+	keyCodeToEvKey[inputevent.RightAlt] = C.KEY_RIGHTALT
 
-	case inputevent.Insert:
-		evKey = C.KEY_INSERT
-	case inputevent.Delete:
-		evKey = C.KEY_DELETE
+	keyCodeToEvKey[inputevent.LeftMeta] = C.KEY_LEFTMETA
+	keyCodeToEvKey[inputevent.RightMeta] = C.KEY_RIGHTMETA
 
-	case inputevent.Home:
-		evKey = C.KEY_HOME
-	case inputevent.End:
-		evKey = C.KEY_END
+	keyCodeToEvKey[inputevent.Insert] = C.KEY_INSERT
+	keyCodeToEvKey[inputevent.Delete] = C.KEY_DELETE
 
-	case inputevent.PageUp:
-		evKey = C.KEY_PAGEUP
-	case inputevent.PageDown:
-		evKey = C.KEY_PAGEDOWN
+	keyCodeToEvKey[inputevent.Home] = C.KEY_HOME
+	keyCodeToEvKey[inputevent.End] = C.KEY_END
 
-	case inputevent.Up:
-		evKey = C.KEY_UP
-	case inputevent.Left:
-		evKey = C.KEY_LEFT
-	case inputevent.Down:
-		evKey = C.KEY_DOWN
-	case inputevent.Right:
-		evKey = C.KEY_RIGHT
-	}
-	return evKey
+	keyCodeToEvKey[inputevent.PageUp] = C.KEY_PAGEUP
+	keyCodeToEvKey[inputevent.PageDown] = C.KEY_PAGEDOWN
+
+	keyCodeToEvKey[inputevent.Up] = C.KEY_UP
+	keyCodeToEvKey[inputevent.Left] = C.KEY_LEFT
+	keyCodeToEvKey[inputevent.Down] = C.KEY_DOWN
+	keyCodeToEvKey[inputevent.Right] = C.KEY_RIGHT
 }

@@ -9,10 +9,12 @@ func (MouseClick) inputEvent()  {}
 func (MouseScroll) inputEvent() {}
 func (KeyPress) inputEvent()    {}
 
-var _ InputEvent = MouseMove{}
-var _ InputEvent = MouseClick{}
-var _ InputEvent = MouseScroll{}
-var _ InputEvent = KeyPress{}
+var (
+	_ InputEvent = MouseMove{}
+	_ InputEvent = MouseClick{}
+	_ InputEvent = MouseScroll{}
+	_ InputEvent = KeyPress{}
+)
 
 // mouse
 
@@ -34,13 +36,12 @@ type MouseScroll struct {
 type MouseButton uint8
 
 const (
-	mouseButtonMinorant MouseButton = iota
+	_ MouseButton = iota
 	MouseButtonLeft
 	MouseButtonRight
 	MouseButtonMiddle
 	MouseButtonMouse4
 	MouseButtonMouse5
-	mouseButtonMajorant
 )
 
 type MouseButtonAction uint8
@@ -75,7 +76,7 @@ const (
 type KeyCode uint16
 
 const (
-	keyCodeMinorant KeyCode = iota
+	_ KeyCode = iota
 
 	Escape
 
@@ -188,8 +189,6 @@ const (
 	Left
 	Down
 	Right
-
-	keyCodeMajorant
 )
 
 type Normalizer struct {
@@ -222,11 +221,11 @@ var MouseButtons = []MouseButton{}
 var KeyCodes = []KeyCode{}
 
 func init() {
-	for x := mouseButtonMinorant + 1; x < mouseButtonMajorant; x++ {
+	for x := MouseButtonLeft; x <= MouseButtonMouse5; x++ {
 		MouseButtons = append(MouseButtons, x)
 	}
 
-	for x := keyCodeMinorant + 1; x < keyCodeMajorant; x++ {
+	for x := Escape; x <= Right; x++ {
 		KeyCodes = append(KeyCodes, x)
 	}
 }
