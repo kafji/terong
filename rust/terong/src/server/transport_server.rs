@@ -30,6 +30,8 @@ pub struct TransportServer {
     pub port: u16,
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
+
+    #[allow(unused)]
     pub client_tls_certs: Vec<Certificate>,
 }
 
