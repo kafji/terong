@@ -80,8 +80,9 @@ fn select_file(path: String, min_size: Option<HuByte>, count: usize) -> Result<(
     } else {
         let mut ns = HashSet::new();
         let dist = Uniform::new(0, files_count);
+        let mut rng = thread_rng();
         while ns.len() < count {
-            let n = thread_rng().sample(dist);
+            let n = rng.sample(dist);
             ns.insert(n);
         }
         ns
