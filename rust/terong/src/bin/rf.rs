@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Context, Error as Anyhow};
-use rand::{thread_rng, Rng};
+use rand::{distributions::Uniform, thread_rng, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
+    collections::HashSet,
     fmt::{Display, Formatter, Result as FmtResult},
     fs::{read_dir, DirEntry},
     path::PathBuf,
@@ -18,19 +19,36 @@ fn main() -> ExitCode {
 
     let name = args.next().unwrap();
 
-    match (args.next(), args.next()) {
-        (None, _) => {
-            eprintln!("Select random file.\nUsage: {} <path> [min size]", name);
+    match (args.next(), args.next(), args.next()) {
+        (None, ..) => {
+            eprintln!(
+                "Select random file.\nUsage: {} <path> [min-size [count]]",
+                name
+            );
             ExitCode::FAILURE
         }
-        (Some(path), min_size) => {
+        (Some(path), min_size, count) => {
+            // if only do operator exists...
             match min_size
                 .map(|x| {
                     x.parse()
                         .map_err(|err| anyhow!("unexpected min size: {}", err))
                 })
                 .transpose()
-                .and_then(|min_size| select_file(path, min_size))
+                .and_then(|min_size| {
+                    count
+                        .map(|x| {
+                            x.parse()
+                                .map_err(|err| anyhow!("unexpected count: {}", err))
+                        })
+                        .transpose()
+                        .and_then(|x| match x {
+                            Some(x) if x < 1 => Err(anyhow!("expecting count > 0")),
+                            _ => Ok(x),
+                        })
+                        .map(|count| (min_size, count))
+                })
+                .and_then(|(min_size, count)| select_file(path, min_size, count.unwrap_or(1)))
             {
                 Ok(_) => ExitCode::SUCCESS,
                 Err(err) => {
@@ -42,27 +60,44 @@ fn main() -> ExitCode {
     }
 }
 
-fn select_file(path: String, min_size: Option<HuByte>) -> Result<(), Anyhow> {
+fn select_file(path: String, min_size: Option<HuByte>, count: usize) -> Result<(), Anyhow> {
+    assert!(count > 0);
+
     if let Some(min_size) = min_size.as_ref() {
         println!("Min size: {}.", min_size);
     }
 
     let tree = build_tree(path, min_size)?;
 
-    let count = tree.count.load(Ordering::Relaxed);
-    println!("Found {} files.", count);
+    let files_count = tree.count.load(Ordering::Relaxed);
+    println!("Found {} files.", files_count);
 
-    if count == 0 {
+    if files_count == 0 {
         return Ok(());
     }
 
-    let mut files = Tree::files(tree);
+    let ns = if files_count <= count {
+        HashSet::from_iter(0..files_count)
+    } else {
+        let mut ns = HashSet::new();
+        let dist = Uniform::new(0, files_count);
+        while ns.len() < count {
+            let n = thread_rng().sample(dist);
+            ns.insert(n);
+        }
+        ns
+    };
 
-    let n = thread_rng().gen_range(0..count);
-    let file = files.nth(n).unwrap();
+    let files = Tree::files(tree)
+        .enumerate()
+        .filter(|(i, _)| ns.contains(i))
+        .take(ns.len())
+        .map(|(_, x)| x);
 
-    let path = file.lock().unwrap().path.clone();
-    println!("{}", path.display());
+    for file in files {
+        let path = &file.lock().unwrap().path;
+        println!("{}", path.display());
+    }
 
     Ok(())
 }
