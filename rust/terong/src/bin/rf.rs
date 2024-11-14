@@ -81,7 +81,7 @@ impl Node {
             // construct path
             parent.lock().unwrap().path.clone().join(&name)
         } else {
-            // construct path
+            // construct path if node is actually a root node
             PathBuf::from(&name)
         };
 
