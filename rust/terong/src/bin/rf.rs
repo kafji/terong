@@ -22,17 +22,16 @@ fn main() -> ExitCode {
     match (args.next(), args.next(), args.next()) {
         (None, ..) => {
             eprintln!(
-                "Select random file.\nUsage: {} <path> [min-size [count]]",
+                "Select random file.\nUsage: {} <path> [min-size=0k [count=1]]",
                 name
             );
             ExitCode::FAILURE
         }
         (Some(path), min_size, count) => {
-            // if only do operator exists...
             match min_size
                 .map(|x| {
                     x.parse()
-                        .map_err(|err| anyhow!("unexpected min size: {}", err))
+                        .map_err(|err| anyhow!("unexpected min-size: {}", err))
                 })
                 .transpose()
                 .and_then(|min_size| {
@@ -114,29 +113,22 @@ struct Node {
 }
 
 impl Node {
-    fn new_child(name: String, dir: bool, parent: Weak<Mutex<Node>>, tree: Weak<Tree>) -> Self {
-        // this expression does two things:
-        // - increment count if child is a file, and
-        // - construct path for child's node struct
-        //
-        // ideally we split this into two separate expressions but that require upgrading parent weakref twice
-        let path = if let Some(parent) = parent.upgrade() {
-            if !dir {
-                // increment count
-                parent
-                    .lock()
-                    .unwrap()
-                    .tree
-                    .upgrade()
-                    .map(|x| x.count.fetch_add(1, Ordering::Relaxed));
-            }
+    fn new_child(name: String, dir: bool, parent: Weak<Mutex<Node>>) -> Self {
+        let path = parent
+            .upgrade()
+            .map(|parent| parent.lock().unwrap().path.join(&name))
+            .unwrap_or_else(|| PathBuf::from(&name));
 
-            // construct path
-            parent.lock().unwrap().path.clone().join(&name)
-        } else {
-            // construct path if node is actually a root node
-            PathBuf::from(&name)
-        };
+        let tree = parent
+            .upgrade()
+            .map(|parent| parent.lock().unwrap().tree.clone())
+            .unwrap_or_else(|| Weak::new());
+
+        // increment count
+        if !dir {
+            tree.upgrade()
+                .and_then(|tree| Some(tree.count.fetch_add(1, Ordering::Relaxed)));
+        }
 
         Self {
             name,
@@ -175,9 +167,7 @@ impl Node {
             }
         }
 
-        let tree = parent.lock().unwrap().tree.clone();
-
-        let child = Node::new_child(name, ftype.is_dir(), Arc::downgrade(&parent), tree);
+        let child = Node::new_child(name, ftype.is_dir(), Arc::downgrade(&parent));
         let child = Arc::new(Mutex::new(child));
 
         parent.lock().unwrap().children.push(child.clone());
@@ -204,7 +194,7 @@ fn build_tree(root_path: String, min_size: Option<HuByte>) -> Result<Arc<Tree>, 
         count: Arc::new(AtomicUsize::new(0)),
     };
 
-    let root = Node::new_child(root_path.clone(), true, Weak::new(), Weak::new());
+    let root = Node::new_child(root_path.clone(), true, Weak::new());
     let root = Arc::new(Mutex::new(root));
 
     tree.root = Some(root.clone());
