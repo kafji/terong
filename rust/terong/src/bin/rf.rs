@@ -62,7 +62,11 @@ struct Node {
 
 impl Node {
     fn new_child(name: String, dir: bool, parent: Weak<Mutex<Node>>, tree: Weak<Tree>) -> Self {
-        // increment count if child is a file and create path for child
+        // this expression does two things:
+        // - increment count if child is a file, and
+        // - construct path for child's node struct
+        //
+        // ideally we split this into two separate expressions but that require upgrading parent weakref twice
         let path = if let Some(parent) = parent.upgrade() {
             if !dir {
                 // increment count
@@ -74,11 +78,13 @@ impl Node {
                     .map(|x| x.count.fetch_add(1, Ordering::Relaxed));
             }
 
-            // create path
+            // construct path
             parent.lock().unwrap().path.clone().join(&name)
         } else {
+            // construct path
             PathBuf::from(&name)
         };
+
         Self {
             name,
             dir,
