@@ -30,11 +30,11 @@ jobs:
             cargo-${{ runner.os }}
 
       - name: Test
-        working-directory: ./rs
+        working-directory: ./rust
         run: cargo test
 
       - name: Build
-        working-directory: ./rs/terong
+        working-directory: ./rust/terong
         run: .\build.bat
 
   rust-linux:
@@ -60,11 +60,11 @@ jobs:
             cargo-${{ runner.os }}
 
       - name: Test
-        working-directory: ./rs
+        working-directory: ./rust
         run: cargo test
 
       - name: Build
-        working-directory: ./rs/terong
+        working-directory: ./rust/terong
         run: ./build.sh
 
   go-windows:
