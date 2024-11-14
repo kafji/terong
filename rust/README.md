@@ -1,3 +1,0 @@
-# Terong (Rust)
-
-Deprecated.
