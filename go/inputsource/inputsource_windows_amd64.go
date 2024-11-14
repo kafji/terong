@@ -323,7 +323,7 @@ func xbuttonToMouseButton(xbutton C.WORD) inputevent.MouseButton {
 }
 
 // Table to convert Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes to [inputevent.KeyCode].
-var keyCodeToVirtualKey = make([]inputevent.KeyCode, 0xFF)
+var keyCodeToVirtualKey = make([]inputevent.KeyCode, 1<<8)
 
 func init() {
 	keyCodeToVirtualKey[C.VK_ESCAPE] = inputevent.Escape
