@@ -5,10 +5,9 @@ use std::{
     fs::{read_dir, DirEntry},
     path::PathBuf,
     process::ExitCode,
-    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
 };
 
@@ -57,21 +56,28 @@ struct Node {
     dir: bool,
     path: PathBuf,
     children: Vec<Arc<Mutex<Node>>>,
-    parent: Option<Arc<Mutex<Node>>>,
-    count: Arc<AtomicUsize>,
+    parent: Weak<Mutex<Node>>,
+    tree: Weak<Tree>,
 }
 
 impl Node {
-    fn new(
-        name: String,
-        dir: bool,
-        parent: Option<Arc<Mutex<Node>>>,
-        count: Arc<AtomicUsize>,
-    ) -> Self {
-        let path = if let Some(parent) = &parent {
+    fn new_child(name: String, dir: bool, parent: Weak<Mutex<Node>>, tree: Weak<Tree>) -> Self {
+        // increment count if child is a file and create path for child
+        let path = if let Some(parent) = parent.upgrade() {
+            if !dir {
+                // increment count
+                parent
+                    .lock()
+                    .unwrap()
+                    .tree
+                    .upgrade()
+                    .map(|x| x.count.fetch_add(1, Ordering::Relaxed));
+            }
+
+            // create path
             parent.lock().unwrap().path.clone().join(&name)
         } else {
-            PathBuf::from_str(&name).unwrap()
+            PathBuf::from(&name)
         };
         Self {
             name,
@@ -79,20 +85,13 @@ impl Node {
             path,
             children: Vec::new(),
             parent,
-            count,
+            tree,
         }
     }
 
-    fn add_child(&mut self, child: Arc<Mutex<Node>>) {
-        if !child.lock().unwrap().dir {
-            self.count.fetch_add(1, Ordering::Relaxed);
-        }
-        self.children.push(child);
-    }
-
-    fn from_dir_entry(
+    fn new_child_from_dir_entry(
+        parent: &Arc<Mutex<Node>>,
         entry: &DirEntry,
-        parent: Arc<Mutex<Node>>,
     ) -> Result<Option<Arc<Mutex<Self>>>, Anyhow> {
         let ftype = entry.file_type()?;
 
@@ -100,47 +99,55 @@ impl Node {
             return Ok(None);
         }
 
-        let name = entry.file_name().into_string().unwrap();
+        let name = entry.file_name().to_string_lossy().into_owned();
 
         const BLACKLIST: &[&str] = &["$RECYCLE.BIN", "System Volume Information"];
         if BLACKLIST.contains(&name.as_str()) {
             return Ok(None);
         }
 
-        let count = parent.lock().unwrap().count.clone();
+        let tree = parent.lock().unwrap().tree.clone();
 
-        let node = Node::new(name, ftype.is_dir(), Some(parent), count);
-        let node = Arc::new(Mutex::new(node));
-        Ok(Some(node))
+        let child = Node::new_child(name, ftype.is_dir(), Arc::downgrade(&parent), tree);
+        let child = Arc::new(Mutex::new(child));
+
+        parent.lock().unwrap().children.push(child.clone());
+
+        Ok(Some(child))
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct Tree {
     root: Option<Arc<Mutex<Node>>>,
     count: Arc<AtomicUsize>,
 }
 
 impl Tree {
-    fn files(tree: Self) -> Files {
+    fn files(tree: impl AsRef<Tree>) -> Files {
         Files::new(tree)
     }
 }
 
-fn build_tree(root_path: String) -> Result<Tree, Anyhow> {
-    let mut tree = Tree::default();
+fn build_tree(root_path: String) -> Result<Arc<Tree>, Anyhow> {
+    let mut tree = Tree {
+        root: None,
+        count: Arc::new(AtomicUsize::new(0)),
+    };
 
-    let root = Node::new(root_path.clone(), true, None, tree.count.clone());
+    let root = Node::new_child(root_path.clone(), true, Weak::new(), Weak::new());
     let root = Arc::new(Mutex::new(root));
+
     tree.root = Some(root.clone());
+    let tree = Arc::new(tree);
+
+    root.lock().unwrap().tree = Arc::downgrade(&tree);
 
     for entry in read_dir(&root_path)
         .with_context(|| format!("failed to read root directory {}", root_path))?
     {
         let entry = entry?;
-        if let Some(child) = Node::from_dir_entry(&entry, root.clone())? {
-            root.lock().unwrap().add_child(child);
-        }
+        Node::new_child_from_dir_entry(&root, &entry)?;
     }
 
     let mut leaves = root.lock().unwrap().children.clone();
@@ -182,12 +189,11 @@ fn expand_leaf(node: Arc<Mutex<Node>>) -> Result<Vec<Arc<Mutex<Node>>>, Anyhow> 
 
     for entry in dir {
         let entry = entry?;
-        if let Some(child) = Node::from_dir_entry(&entry, node.clone())? {
-            node.lock().unwrap().add_child(child);
-        }
+        Node::new_child_from_dir_entry(&node, &entry)?;
     }
 
-    Ok(node.lock().unwrap().children.clone())
+    let children = node.lock().unwrap().children.clone();
+    Ok(children)
 }
 
 #[derive(Debug)]
@@ -196,9 +202,9 @@ struct Files {
 }
 
 impl Files {
-    fn new(tree: Tree) -> Self {
+    fn new(tree: impl AsRef<Tree>) -> Self {
         let mut trail = Vec::new();
-        if let Some(root) = tree.root.as_ref() {
+        if let Some(root) = tree.as_ref().root.as_ref() {
             trail.push(root.clone());
         }
         Self { trail }
