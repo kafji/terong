@@ -113,7 +113,7 @@ struct Node {
 }
 
 impl Node {
-    fn new_child(name: String, dir: bool, parent: Weak<Mutex<Node>>) -> Self {
+    fn new_child_detached(name: String, dir: bool, parent: Weak<Mutex<Node>>) -> Self {
         let path = parent
             .upgrade()
             .map(|parent| parent.lock().unwrap().path.join(&name))
@@ -167,7 +167,7 @@ impl Node {
             }
         }
 
-        let child = Node::new_child(name, ftype.is_dir(), Arc::downgrade(&parent));
+        let child = Node::new_child_detached(name, ftype.is_dir(), Arc::downgrade(&parent));
         let child = Arc::new(Mutex::new(child));
 
         parent.lock().unwrap().children.push(child.clone());
@@ -194,7 +194,7 @@ fn build_tree(root_path: String, min_size: Option<HuByte>) -> Result<Arc<Tree>, 
         count: Arc::new(AtomicUsize::new(0)),
     };
 
-    let root = Node::new_child(root_path.clone(), true, Weak::new());
+    let root = Node::new_child_detached(root_path.clone(), true, Weak::new());
     let root = Arc::new(Mutex::new(root));
 
     tree.root = Some(root.clone());
