@@ -1,9 +1,0 @@
-# Development configurations
-/terong.toml
-/*.pem*
-/*.pem
-
-# Artifacts
-/terong-client*
-/terong-server*
-/rf*

@@ -1,1 +1,8 @@
+/*.pem*
+/rf*
 /target
+/terong_client*
+/terong_server*
+/terong-client*
+/terong-server*
+/terong.toml
