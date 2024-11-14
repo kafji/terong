@@ -1,3 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["input-event", "terong"]
+
+[profile.release]
+debug = "line-tables-only"

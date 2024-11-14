@@ -14,6 +14,8 @@ hex = "0.4"
 input-event = { path = "../input-event" }
 macross = { git = "https://github.com/kafji/macross", features = ["typing"] }
 paste = "1"
+rand = "0.8"
+rayon = "1"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

@@ -2,3 +2,4 @@
 /terong-server*
 /terong-client*
 /*.pem
+/rf*
