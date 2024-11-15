@@ -267,6 +267,9 @@ func (s *Session) SendPing() error {
 }
 
 func (s *Session) Close() {
+	if s == nil {
+		return
+	}
 	defer s.cancelInbox()
 	if s.closed {
 		return

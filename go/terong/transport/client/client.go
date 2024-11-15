@@ -95,9 +95,7 @@ func Start(ctx context.Context, cfg *Config) *Handle {
 
 		var sess *session
 		defer func() {
-			if sess != nil {
-				sess.Close()
-			}
+			sess.Close()
 		}()
 
 		for {
