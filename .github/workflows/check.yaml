@@ -4,15 +4,18 @@ name: Check
 
 on:
   push:
+    branches:
+      - master
   pull_request:
+    branches:
+      - master
 
 jobs:
   rust-windows:
     runs-on: windows-latest
     timeout-minutes: 5
     env:
-      RUST_BACKTRACE: full
-      RUST_LOG: debug
+      RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -41,8 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      RUST_BACKTRACE: full
-      RUST_LOG: debug
+      RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
 
