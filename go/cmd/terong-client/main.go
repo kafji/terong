@@ -17,7 +17,7 @@ import (
 var slog = logging.NewLogger("terong-client/main")
 
 func main() {
-	slog.Info("starting", "GODEBUG", os.Getenv("GODEBUG"), "GOTRACEBACK", os.Getenv("GOTRACEBACK"))
+	slog.Info("starting", "GOGC", os.Getenv("GOGC"), "GODEBUG", os.Getenv("GODEBUG"), "GOTRACEBACK", os.Getenv("GOTRACEBACK"))
 
 	f, err := os.Create("terong-client.prof")
 	if err != nil {
