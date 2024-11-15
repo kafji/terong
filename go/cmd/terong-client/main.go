@@ -19,6 +19,8 @@ var slog = logging.NewLogger("terong-client/main")
 func main() {
 	slog.Info("starting", "GOGC", os.Getenv("GOGC"), "GODEBUG", os.Getenv("GODEBUG"), "GOTRACEBACK", os.Getenv("GOTRACEBACK"))
 
+	ctx := context.Background()
+
 	f, err := os.Create("terong-client.prof")
 	if err != nil {
 		panic(err)
@@ -30,14 +32,16 @@ func main() {
 	}
 	defer pprof.StopCPUProfile()
 
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 
 	s := make(chan os.Signal, 1)
 	signal.Notify(s, syscall.SIGINT)
 	go func() {
+		defer pprof.StopCPUProfile()
+		defer cancel(errors.New("SIGINT"))
 		<-s
-		cancel(errors.New("SIGINT"))
-		pprof.StopCPUProfile()
+		signal.Stop(s)
 	}()
 
 	client.Start(ctx)
