@@ -22,8 +22,10 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::fs::MetadataExt;
 
 pub trait Key {
+    /// Concatenates key. See `Key::concat(&PathBuf, &PathBuf)` for example.
     fn concat(&self, other: &Self) -> Self;
 
+    /// Returns string representation.
     fn into_string(&self) -> String;
 }
 
@@ -38,9 +40,18 @@ impl Key for PathBuf {
 }
 
 pub trait NodeInfo<K> {
+    /// Returns node key.
     fn key(&self) -> Result<K, Anyhow>;
+
+    /// Denotes if node can have children.
     fn has_child(&self) -> Result<bool, Anyhow>;
+
+    /// Denotes if node is irregular.
+    ///
+    /// Irregular nodes will be filtered out from the tree. See `Node::new_child_from_info`.
     fn irregular(&self) -> Result<bool, Anyhow>;
+
+    /// Returns node size. Used for min size filter. See `Node::new_child_from_info`.
     fn size(&self) -> Result<u64, Anyhow>;
 }
 
@@ -87,9 +98,14 @@ pub struct Node<K> {
 
 impl<K: Key> Node<K> {
     pub fn key(&self) -> &K {
-        self.key.borrow()
+        &self.key
     }
 
+    /// Construct new child node.
+    ///
+    /// Achtung!
+    ///
+    /// While this function takes parent as its argument, the returned node will not be added into parent's children.
     fn new_child_detached(key: K, has_child: bool, parent: Weak<Mutex<Self>>) -> Self {
         let key: K = parent
             .upgrade()
@@ -116,6 +132,7 @@ impl<K: Key> Node<K> {
         }
     }
 
+    /// Creates new child node and add it into parent's children.
     fn new_child_from_info<T: NodeInfo<K>>(
         parent: &Arc<Mutex<Self>>,
         info: &T,
@@ -123,6 +140,7 @@ impl<K: Key> Node<K> {
     ) -> Result<Option<Arc<Mutex<Self>>>, Anyhow> {
         let key = info.key()?;
 
+        // filter out system directories on windows
         const BLACKLIST: &[&str] = &["$RECYCLE.BIN", "System Volume Information"];
         if BLACKLIST.contains(&key.borrow().into_string().as_str()) {
             return Ok(None);
@@ -160,10 +178,12 @@ pub struct Tree<K> {
 }
 
 impl<K> Tree<K> {
+    /// Returns how many files were counted.
     pub fn count(&self) -> usize {
         self.count.load(Ordering::Relaxed)
     }
 
+    /// Iterates over files in the tree.
     pub fn files<'a>(tree: &'a Tree<K>) -> Files<'a, K> {
         Files::new(tree)
     }
@@ -205,6 +225,7 @@ where
         tree.root = Some(root.clone());
         let tree = Arc::new(tree);
 
+        // fix root's tree ref
         root.lock().unwrap().tree = Arc::downgrade(&tree);
 
         for entry in (self.read_info)(&root_key)
@@ -265,7 +286,7 @@ where
     }
 }
 
-/// Unlike most (if not any) iterators from stdlib, this iterator allow concurrent modification to the data structure.
+/// Unlike most (if not all) iterators from stdlib, this iterator allow concurrent modification to the data structure.
 #[derive(Debug)]
 pub struct Files<'a, K> {
     tree: &'a Tree<K>,
@@ -358,7 +379,7 @@ mod tests {
         Ok(iter)
     }
 
-    /// Helper function generate JSON serialized `Vec<TableEntry>`, see `./testadata/table.json`.
+    /// Helper function for generating JSON serialized `Vec<TableEntry>`, see `./testadata/table.json`.
     #[allow(unused)]
     fn gen_table_json() -> String {
         let mut table = Vec::new();
