@@ -94,7 +94,7 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             }
             _ => {
                 match msg.message {
-                    n if n == MessageCode::InputEvent as _ => {
+                    n if n == MessageCode::InputEvent as u32 => {
                         let event = {
                             // acquire input event
                             let (new_event, _) = *unsafe {
@@ -206,7 +206,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
     unsafe { QueryPerformanceCounter(&mut t0) };
 
     // per documentation, ncode will always be HC_ACTION
-    assert_eq!(ncode, HC_ACTION as _);
+    assert_eq!(ncode, HC_ACTION as i32);
 
     // pointer dance to get MSLLHOOKSTRUCT from lparam
     let ptr_hook_event = lparam.0 as *const MSLLHOOKSTRUCT;
@@ -309,7 +309,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     unsafe { QueryPerformanceCounter(&mut t0) };
 
     // per documentation, ncode will always be HC_ACTION
-    assert_eq!(ncode, HC_ACTION as _);
+    assert_eq!(ncode, HC_ACTION as i32);
 
     // pointer dance to get KBDLLHOOKSTRUCT from lparam
     let ptr_hook_event = lparam.0 as *const KBDLLHOOKSTRUCT;
@@ -370,8 +370,8 @@ fn get_mouse_button(data: MOUSEHOOKSTRUCTEX_MOUSE_DATA) -> Option<MouseButton> {
     bytes.copy_from_slice(&data.0.to_be_bytes()[..2]);
     let value = u16::from_be_bytes(bytes);
     match value {
-        n if n == XBUTTON1.0 as _ => MouseButton::Mouse4.into(),
-        n if n == XBUTTON2.0 as _ => MouseButton::Mouse5.into(),
+        n if n == XBUTTON1.0 as u16 => MouseButton::Mouse4.into(),
+        n if n == XBUTTON2.0 as u16 => MouseButton::Mouse5.into(),
         _ => None,
     }
 }
