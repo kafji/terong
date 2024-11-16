@@ -1,4 +1,3 @@
-use cfg_if::cfg_if;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -15,13 +14,10 @@ pub struct ServerConfig {
     pub linux: LinuxConfig,
 }
 
-cfg_if! {
-    if #[cfg(target_os = "linux")] {
-        #[derive(Clone, Deserialize, Debug)]
-        pub struct LinuxConfig {
-            pub keyboard_device: Option<PathBuf>,
-            pub mouse_device: Option<PathBuf>,
-            pub touchpad_device: Option<PathBuf>,
-        }
-    }
+#[cfg(target_os = "linux")]
+#[derive(Clone, Deserialize, Debug)]
+pub struct LinuxConfig {
+    pub keyboard_device: Option<PathBuf>,
+    pub mouse_device: Option<PathBuf>,
+    pub touchpad_device: Option<PathBuf>,
 }

@@ -8,7 +8,6 @@ anyhow = "1"
 async-trait = "0.1"
 bincode = "1"
 bytes = "1"
-cfg-if = "1"
 futures = "0.3"
 hex = "0.4"
 macross = { git = "https://github.com/kafji/macross", features = ["typing"] }

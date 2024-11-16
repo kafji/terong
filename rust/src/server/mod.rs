@@ -8,7 +8,6 @@ use crate::{
     server::{config::ServerConfig, transport_server::TransportServer},
 };
 use anyhow::Error;
-use cfg_if::cfg_if;
 use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
@@ -25,20 +24,16 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
 
     let (event_tx, event_rx) = mpsc::channel(1);
 
-    let input_source = {
-        cfg_if! {
-            if #[cfg(target_os = "linux")] {
-                crate::input_source::start(
-                    cfg.linux.keyboard_device,
-                    cfg.linux.mouse_device,
-                    cfg.linux.touchpad_device,
-                    event_tx
-                )
-            } else {
-                crate::input_source::start(event_tx)
-            }
-        }
-    };
+    #[cfg(target_os = "linux")]
+    let input_source = crate::input_source::start(
+        cfg.linux.keyboard_device,
+        cfg.linux.mouse_device,
+        cfg.linux.touchpad_device,
+        event_tx,
+    );
+
+    #[cfg(target_os = "windows")]
+    let input_source = crate::input_source::start(event_tx);
 
     let server = {
         let tls_certs = read_certs(&tls_cert_path).await?;
