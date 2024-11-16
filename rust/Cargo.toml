@@ -16,6 +16,7 @@ paste = "1"
 rand = "0.8"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-native-tls = "0.3"
@@ -38,6 +39,9 @@ windows = { version = "0.43", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+criterion = "0.5"
 
 [profile.release]
 debug = "line-tables-only"
