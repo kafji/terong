@@ -8,13 +8,18 @@ use std::{
     fmt::Debug,
     fs,
     marker::PhantomData,
-    os::windows::fs::MetadataExt,
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex, Weak,
     },
 };
+
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::MetadataExt;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::fs::MetadataExt;
 
 pub trait Key {
     fn concat(&self, other: &Self) -> Self;
@@ -59,7 +64,14 @@ where
 
     fn size(&self) -> Result<u64, Anyhow> {
         let fmeta = self.metadata()?;
-        Ok(fmeta.file_size())
+
+        #[cfg(target_os = "linux")]
+        let size = fmeta.size();
+
+        #[cfg(target_os = "windows")]
+        let size = fmeta.file_size();
+
+        Ok(size)
     }
 }
 
