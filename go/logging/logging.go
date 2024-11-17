@@ -13,33 +13,7 @@ type Logger interface {
 }
 
 func NewLogger(namespace string) Logger {
-	return &logger{namespace: namespace}
-}
-
-type logger struct {
-	namespace string
-}
-
-func (l *logger) args(args ...any) []any {
-	args2 := append([]any{}, "ns", l.namespace)
-	args2 = append(args2, args...)
-	return args2
-}
-
-func (l *logger) Debug(msg string, args ...any) {
-	slog.Debug(msg, l.args(args...)...)
-}
-
-func (l *logger) Info(msg string, args ...any) {
-	slog.Info(msg, l.args(args...)...)
-}
-
-func (l *logger) Warn(msg string, args ...any) {
-	slog.Warn(msg, l.args(args...)...)
-}
-
-func (l *logger) Error(msg string, args ...any) {
-	slog.Error(msg, l.args(args...)...)
+	return slog.With("ns", namespace)
 }
 
 func SetLogLevel(level string) {
