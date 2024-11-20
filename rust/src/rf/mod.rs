@@ -174,7 +174,7 @@ impl<K: Key> Node<K> {
 #[derive(Debug)]
 pub struct Tree<K> {
     root: Option<Arc<Mutex<Node<K>>>>,
-    count: Arc<AtomicUsize>,
+    count: AtomicUsize,
 }
 
 impl<K> Tree<K> {
@@ -214,7 +214,7 @@ where
     pub fn build(&self, root_key: K, min_size: Option<HuByte>) -> Result<Arc<Tree<K>>, Anyhow> {
         let mut tree = Tree {
             root: None,
-            count: Arc::new(AtomicUsize::new(0)),
+            count: AtomicUsize::new(0),
         };
 
         // assume root has child (is a dir)
