@@ -16,11 +16,10 @@ use windows::Win32::{
     UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, SetCursorPos,
         SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MOUSEHOOKSTRUCTEX_MOUSE_DATA, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA,
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP,
-        WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
-        WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
+        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
+        WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+        WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
     },
 };
 
@@ -67,7 +66,9 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             if old_cursor_pos.is_none() {
                 let cursor_pos = {
                     let mut p = POINT::default();
-                    unsafe { GetCursorPos(&mut p) };
+                    unsafe {
+                        GetCursorPos(&mut p).unwrap();
+                    }
                     p
                 };
                 old_cursor_pos = Some(MousePosition {
@@ -77,7 +78,9 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
             }
 
             let MousePosition { x, y } = get_cursor_locked_pos();
-            unsafe { SetCursorPos(x as _, y as _) };
+            unsafe {
+                SetCursorPos(x as _, y as _).unwrap();
+            }
         }
 
         // wait for message
@@ -158,7 +161,9 @@ impl LocalEventMapper {
 
 fn restore_mouse_position(pos: Option<MousePosition>) {
     if let Some(MousePosition { x, y }) = pos {
-        unsafe { SetCursorPos(x as _, y as _) };
+        unsafe {
+            SetCursorPos(x as _, y as _).unwrap();
+        }
     }
 }
 
@@ -166,15 +171,15 @@ fn restore_mouse_position(pos: Option<MousePosition>) {
 fn get_screen_center() -> (i16 /* x */, i16 /* y */) {
     let mut rect = RECT::default();
     let ptr_rect = &mut rect as *mut _ as *mut c_void;
-    let b = unsafe {
+    unsafe {
         SystemParametersInfoW(
             SPI_GETWORKAREA,
             0,
             Some(ptr_rect),
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS::default(),
         )
-    };
-    assert!(b == true);
+        .unwrap();
+    }
     let x = (rect.right / 2) as _;
     let y = (rect.bottom / 2) as _;
     (x, y)
@@ -203,7 +208,9 @@ fn get_cursor_locked_pos() -> MousePosition {
 /// Procedure for low level mouse hook.
 extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let mut t0: i64 = 0;
-    unsafe { QueryPerformanceCounter(&mut t0) };
+    unsafe {
+        QueryPerformanceCounter(&mut t0).unwrap();
+    }
 
     // per documentation, ncode will always be HC_ACTION
     assert_eq!(ncode, HC_ACTION as i32);
@@ -263,7 +270,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         WM_MOUSEWHEEL => {
             let delta = {
                 let mut bytes = [0; 2];
-                bytes.copy_from_slice(&hook_event.mouseData.0.to_be_bytes()[..2]);
+                bytes.copy_from_slice(&hook_event.mouseData.to_be_bytes()[..2]);
                 i16::from_be_bytes(bytes)
             };
             let clicks = delta / WHEEL_DELTA as i16;
@@ -293,7 +300,9 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
     }
 
     let mut t1: i64 = 0;
-    unsafe { QueryPerformanceCounter(&mut t1) };
+    unsafe {
+        QueryPerformanceCounter(&mut t1).unwrap();
+    }
     debug!("mouse_hook_proc takes: {} ms", t1 / 1000 - t0 / 1000);
 
     if consume_input() {
@@ -306,7 +315,9 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
 /// Procedure for low level keyboard hook.
 extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let mut t0: i64 = 0;
-    unsafe { QueryPerformanceCounter(&mut t0) };
+    unsafe {
+        QueryPerformanceCounter(&mut t0).unwrap();
+    }
 
     // per documentation, ncode will always be HC_ACTION
     assert_eq!(ncode, HC_ACTION as i32);
@@ -335,7 +346,9 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     }
 
     let mut t1: i64 = 0;
-    unsafe { QueryPerformanceCounter(&mut t1) };
+    unsafe {
+        QueryPerformanceCounter(&mut t1).unwrap();
+    }
     debug!("keyboard_hook_proc takes: {} ms", t1 / 1000 - t0 / 1000);
 
     if consume_input() {
@@ -354,24 +367,23 @@ fn post_input_event(event: LocalInputEvent, time: Duration) {
     let ptr_event = event as *mut _;
 
     unsafe {
-        let b = PostMessageW(
+        PostMessageW(
             None,
             MessageCode::InputEvent as _,
             WPARAM::default(),
             LPARAM(ptr_event as isize),
-        );
-        let b: bool = b.into();
-        assert_eq!(b, true);
+        )
+        .unwrap();
     }
 }
 
-fn get_mouse_button(data: MOUSEHOOKSTRUCTEX_MOUSE_DATA) -> Option<MouseButton> {
+fn get_mouse_button(data: u32) -> Option<MouseButton> {
     let mut bytes = [0; 2];
-    bytes.copy_from_slice(&data.0.to_be_bytes()[..2]);
+    bytes.copy_from_slice(&data.to_be_bytes()[..2]);
     let value = u16::from_be_bytes(bytes);
     match value {
-        n if n == XBUTTON1.0 as u16 => MouseButton::Mouse4.into(),
-        n if n == XBUTTON2.0 as u16 => MouseButton::Mouse5.into(),
+        n if n == XBUTTON1 as u16 => MouseButton::Mouse4.into(),
+        n if n == XBUTTON2 as u16 => MouseButton::Mouse5.into(),
         _ => None,
     }
 }
@@ -383,9 +395,10 @@ struct Unhooker(HHOOK);
 
 impl Drop for Unhooker {
     fn drop(&mut self) {
-        let ok: bool = unsafe { UnhookWindowsHookEx(self.0) }.into();
-        if !ok {
-            error!("failed to unhook {:?}", self.0);
+        unsafe {
+            if let Err(err) = UnhookWindowsHookEx(self.0) {
+                error!("failed to unhook {:?}: {}", self.0, err);
+            }
         }
     }
 }

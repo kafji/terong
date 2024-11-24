@@ -45,8 +45,8 @@ pub fn start(mut event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
                         dx: Default::default(),
                         dy: Default::default(),
                         mouseData: match button {
-                            MouseButton::Mouse4 => XBUTTON1.0 as _,
-                            MouseButton::Mouse5 => XBUTTON2.0 as _,
+                            MouseButton::Mouse4 => XBUTTON1 as _,
+                            MouseButton::Mouse5 => XBUTTON2 as _,
                             _ => 0,
                         },
                         dwFlags: match button {
@@ -68,8 +68,8 @@ pub fn start(mut event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
                         dx: Default::default(),
                         dy: Default::default(),
                         mouseData: match button {
-                            MouseButton::Mouse4 => XBUTTON1.0 as _,
-                            MouseButton::Mouse5 => XBUTTON2.0 as _,
+                            MouseButton::Mouse4 => XBUTTON1 as _,
+                            MouseButton::Mouse5 => XBUTTON2 as _,
                             _ => 0,
                         },
                         dwFlags: match button {
@@ -90,12 +90,20 @@ pub fn start(mut event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
                     mi: MOUSEINPUT {
                         dx: Default::default(),
                         dy: Default::default(),
-                        mouseData: match direction {
-                            MouseScrollDirection::Up { clicks } => {
-                                (WHEEL_DELTA * clicks as u32) as i32
-                            }
-                            MouseScrollDirection::Down { clicks } => {
-                                -((WHEEL_DELTA * clicks as u32) as i32)
+                        mouseData: {
+                            match direction {
+                                MouseScrollDirection::Up { clicks } => {
+                                    let v = WHEEL_DELTA * clicks as u32;
+                                    assert_eq!(v >> 31, 0);
+                                    v
+                                }
+                                MouseScrollDirection::Down { clicks } => {
+                                    let mut v = WHEEL_DELTA * clicks as u32;
+                                    assert_eq!(v >> 31, 0);
+                                    // assume two's complement
+                                    v = !v;
+                                    v
+                                }
                             }
                         },
                         dwFlags: MOUSEEVENTF_WHEEL,
