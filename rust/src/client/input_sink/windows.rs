@@ -102,6 +102,7 @@ pub fn start(mut event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
                                     assert_eq!(v >> 31, 0);
                                     // assume two's complement
                                     v = !v;
+                                    v += 1;
                                     v
                                 }
                             }
