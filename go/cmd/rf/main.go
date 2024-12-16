@@ -43,6 +43,7 @@ type node struct {
 func (n *node) addChild(child *node) {
 	child.parent = n
 	child.tree = n.tree
+
 	if !child.dir {
 		n.tree.count.Add(1)
 	}
@@ -126,6 +127,7 @@ func buildTree(rootPath string) *tree {
 	for len(leaves) > 0 {
 		mu := new(sync.Mutex)
 		leaves2 := make([]*node, 0)
+
 		for len(leaves) > 0 {
 			leaf := leaves[len(leaves)-1]
 			leaves = leaves[:len(leaves)-1]
@@ -142,10 +144,11 @@ func buildTree(rootPath string) *tree {
 				more := expandLeaf(leaf)
 
 				mu.Lock()
-				defer mu.Unlock()
 				leaves2 = append(leaves2, more...)
+				mu.Unlock()
 			}()
 		}
+
 		latch.Wait()
 		leaves = leaves2
 	}
