@@ -1,9 +1,9 @@
-use super::event::{LocalInputEvent, MousePosition};
-use crate::{
-    input_source::controller::InputController,
-    transport::protocol::{
-        windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection,
-    },
+use super::{
+    controller::InputController,
+    event::{LocalInputEvent, MousePosition},
+};
+use crate::transport::protocol::{
+    windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection,
 };
 use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};

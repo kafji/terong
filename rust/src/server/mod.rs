@@ -1,3 +1,4 @@
+mod input_source;
 mod transport_server;
 
 pub mod config;
@@ -25,7 +26,7 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
     let (event_tx, event_rx) = mpsc::channel(1);
 
     #[cfg(target_os = "linux")]
-    let input_source = crate::input_source::start(
+    let input_source = input_source::start(
         cfg.linux.keyboard_device,
         cfg.linux.mouse_device,
         cfg.linux.touchpad_device,
@@ -33,7 +34,7 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
     );
 
     #[cfg(target_os = "windows")]
-    let input_source = crate::input_source::start(event_tx);
+    let input_source = input_source::start(event_tx);
 
     let server = {
         let tls_certs = read_certs(&tls_cert_path).await?;
