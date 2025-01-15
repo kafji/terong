@@ -10,7 +10,7 @@ bincode = "1"
 bytes = "1"
 futures = "0.3"
 hex = "0.4"
-macross = { git = "https://github.com/kafji/macross", features = ["typing"] }
+macross = { path = "../macross", features = ["typing"] }
 paste = "1"
 rand = "0.8"
 rayon = "1"

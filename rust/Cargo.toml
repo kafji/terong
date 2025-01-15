@@ -1,5 +1,5 @@
 [workspace]
-members = ["sage", "terong"]
+members = ["macross", "sage", "terong"]
 
 [profile.release]
 debug = "line-tables-only"
