@@ -45,14 +45,21 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 
     // set low level mouse hook
     let _mouse_hook = Unhooker(
-        unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), module, 0) }
+        unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), Some(module.into()), 0) }
             .expect("failed to set mouse hook"),
     );
 
     // set low level keyboard hook
     let _keyboard_hook = Unhooker(
-        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), module, 0) }
-            .expect("failed to set keyboard hook"),
+        unsafe {
+            SetWindowsHookExW(
+                WH_KEYBOARD_LL,
+                Some(keyboard_hook_proc),
+                Some(module.into()),
+                0,
+            )
+        }
+        .expect("failed to set keyboard hook"),
     );
 
     let mut msg = MSG::default();
