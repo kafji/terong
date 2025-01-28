@@ -12,6 +12,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -173,6 +174,8 @@ func writeInput(uinput *C.struct_libevdev_uinput, input inputevent.InputEvent) e
 	slog.Debug("map input values", "duration_ns", d.Nanoseconds())
 
 	t = time.Now()
+
+	defer runtime.KeepAlive(events)
 
 	ret := C.write_events(uinput, C.size_t(len(events)), &events[0])
 	if err := evdevError(ret); err != nil {
