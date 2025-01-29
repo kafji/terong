@@ -177,7 +177,7 @@ func writeInput(uinput *C.struct_libevdev_uinput, input inputevent.InputEvent) e
 
 	defer runtime.KeepAlive(events)
 
-	ret := C.write_events(uinput, C.size_t(len(events)), &events[0])
+	ret := C.write_events(uinput, C.size_t(len(events)), (*C.event_t)(unsafe.Pointer(&events[0])))
 	if err := evdevError(ret); err != nil {
 		return fmt.Errorf("failed to write event: %v", err)
 	}
