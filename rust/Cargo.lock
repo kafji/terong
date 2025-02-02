@@ -1490,6 +1490,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
+ "ciborium",
  "criterion",
  "evdev-rs",
  "futures",

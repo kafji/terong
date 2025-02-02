@@ -8,6 +8,7 @@ anyhow = "1"
 async-trait = "0.1"
 bincode = "1"
 bytes = "1"
+ciborium = "0.2"
 futures = "0.3"
 hex = "0.4"
 macross = { path = "../macross", features = ["typing"] }
