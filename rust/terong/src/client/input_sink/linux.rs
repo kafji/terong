@@ -4,7 +4,7 @@ use evdev_rs::{
     enums::{BusType, EventCode, EventType, EV_REL, EV_SYN},
     DeviceWrapper, InputEvent as LinuxInputEvent, UInputDevice, UninitDevice,
 };
-use std::{convert::TryInto, iter, time::SystemTime};
+use std::{convert::TryInto, time::SystemTime};
 use strum::IntoEnumIterator;
 use tokio::{
     sync::mpsc,
@@ -12,8 +12,9 @@ use tokio::{
 };
 
 pub fn start(event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
-    task::spawn_blocking(|| {
-        run_input_sink(event_rx).unwrap();
+    task::spawn(async {
+        run_input_sink(event_rx).await.unwrap();
+        ()
     })
 }
 
@@ -31,7 +32,7 @@ fn create_virtual_device() -> Result<UninitDevice, Error> {
         UninitDevice::new().ok_or_else(|| anyhow!("failed to create virtual evdev device"))?;
 
     dev.set_name("Terong Virtual Input Device");
-    dev.set_bustype(BusType::BUS_USB as _);
+    dev.set_bustype(BusType::BUS_VIRTUAL as _);
 
     dev.enable_event_type(&EventType::EV_SYN)?;
     dev.enable_event_code(&EventCode::EV_SYN(EV_SYN::SYN_REPORT), None)?;
@@ -58,73 +59,90 @@ fn create_virtual_device() -> Result<UninitDevice, Error> {
     Ok(dev)
 }
 
-fn run_input_sink(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
+async fn run_input_sink(mut event_rx: mpsc::Receiver<InputEvent>) -> Result<(), Error> {
     let dev = create_virtual_device()?;
-
     let uidev = UInputDevice::create_from_device(&dev)?;
-
-    while let Some(event) = event_rx.blocking_recv() {
-        let events: Vec<LinuxInputEvent> = event.into_vec()?;
-
+    let mut events = Vec::new();
+    while let Some(event) = event_rx.recv().await {
+        to_linux_events(event, &mut events)?;
         for event in &events {
             uidev.write_event(&event)?;
         }
+        events.clear();
     }
-
     Ok(())
 }
 
-trait IntoVec {
-    fn into_vec(self) -> Result<Vec<LinuxInputEvent>, Error>;
-}
+fn to_linux_events(event: InputEvent, out: &mut Vec<LinuxInputEvent>) -> Result<(), Error> {
+    let time = SystemTime::now().try_into()?;
 
-impl IntoVec for InputEvent {
-    fn into_vec(self) -> Result<Vec<LinuxInputEvent>, Error> {
-        let time = SystemTime::now().try_into()?;
-
-        let es = match self {
-            // mouse move
-            InputEvent::MouseMove { dx, dy } => vec![
-                (EventCode::EV_REL(EV_REL::REL_X), dx),
-                (EventCode::EV_REL(EV_REL::REL_Y), dy),
-            ],
-
-            // mouse click
-            InputEvent::MouseButtonDown { button } => {
-                vec![(EventCode::EV_KEY(button.into()), 1)]
-            }
-            InputEvent::MouseButtonUp { button } => {
-                vec![(EventCode::EV_KEY(button.into()), 0)]
-            }
-
-            // mouse scroll
-            InputEvent::MouseScroll {
-                direction: MouseScrollDirection::Up { clicks },
-            } => vec![(EventCode::EV_REL(EV_REL::REL_WHEEL), clicks as i16)],
-            InputEvent::MouseScroll {
-                direction: MouseScrollDirection::Down { clicks },
-            } => vec![(EventCode::EV_REL(EV_REL::REL_WHEEL), -(clicks as i16))],
-
-            // keypress
-            InputEvent::KeyDown { key } => vec![(EventCode::EV_KEY(key.into()), 1)],
-            InputEvent::KeyRepeat { key } => vec![(EventCode::EV_KEY(key.into()), 2)],
-            InputEvent::KeyUp { key } => vec![(EventCode::EV_KEY(key.into()), 0)],
-        };
-
-        let es = es
-            .into_iter()
-            .map(|(event_code, value)| LinuxInputEvent {
+    let events: &[LinuxInputEvent] = match event {
+        // mouse move
+        InputEvent::MouseMove { dx, dy } => &[
+            LinuxInputEvent {
                 time,
-                event_code,
-                value: value as _,
-            })
-            .chain(iter::once(LinuxInputEvent {
+                event_code: EventCode::EV_REL(EV_REL::REL_X),
+                value: dx as _,
+            },
+            LinuxInputEvent {
                 time,
-                event_code: EventCode::EV_SYN(EV_SYN::SYN_REPORT),
-                value: 0,
-            }))
-            .collect();
+                event_code: EventCode::EV_REL(EV_REL::REL_Y),
+                value: dy as _,
+            },
+        ],
 
-        Ok(es)
-    }
+        // mouse click
+        InputEvent::MouseButtonDown { button } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_KEY(button.into()),
+            value: 1,
+        }],
+        InputEvent::MouseButtonUp { button } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_KEY(button.into()),
+            value: 0,
+        }],
+
+        // mouse scroll
+        InputEvent::MouseScroll {
+            direction: MouseScrollDirection::Up { clicks },
+        } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_REL(EV_REL::REL_WHEEL),
+            value: clicks as _,
+        }],
+        InputEvent::MouseScroll {
+            direction: MouseScrollDirection::Down { clicks },
+        } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_REL(EV_REL::REL_WHEEL),
+            value: -(clicks as i32),
+        }],
+
+        // keypress
+        InputEvent::KeyDown { key } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_KEY(key.into()),
+            value: 1,
+        }],
+        InputEvent::KeyRepeat { key } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_KEY(key.into()),
+            value: 2,
+        }],
+        InputEvent::KeyUp { key } => &[LinuxInputEvent {
+            time,
+            event_code: EventCode::EV_KEY(key.into()),
+            value: 0,
+        }],
+    };
+
+    out.extend_from_slice(events);
+    out.push(LinuxInputEvent {
+        time,
+        event_code: EventCode::EV_SYN(EV_SYN::SYN_REPORT),
+        value: 0,
+    });
+
+    Ok(())
 }
