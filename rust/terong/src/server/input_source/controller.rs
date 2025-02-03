@@ -71,6 +71,7 @@ impl InputController {
 
 #[derive(Debug)]
 struct EventBuffer<T> {
+    /// Ordered from oldest to newest.
     buf: Vec<(LocalInputEvent, T)>,
 }
 
@@ -94,11 +95,11 @@ where
         // drop outdated events
         let part = self.buf.partition_point(|(_, t)| {
             let d = time - *t;
-            d <= Duration::from_millis(300)
+            d > Duration::from_millis(300)
         });
-        self.buf.truncate(part);
+        self.buf.drain(0..part);
 
-        self.buf.insert(0, (event, time));
+        self.buf.push((event, time));
     }
 }
 
@@ -126,8 +127,7 @@ where
         RecentKeyPresses::new(
             self.buf
                 .iter()
-                .filter_map(|(e, t)| KeyPressEvent::from_local_input_event(e, t))
-                .rev(),
+                .filter_map(|(e, t)| KeyPressEvent::from_local_input_event(e, t)),
             since,
         )
     }

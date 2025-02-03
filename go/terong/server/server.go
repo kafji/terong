@@ -133,23 +133,36 @@ func (b *keyBuffer) push(k inputevent.KeyPress) {
 func (b *keyBuffer) toggleKeyStrokeExists(after time.Time) (bool, time.Time) {
 	c := 1
 	var t time.Time
+	// look from the newest to the oldest
 	for i := len(b.buf) - 1; i >= 0; i-- {
-		e := b.buf[i]
-		if e.k.Key != inputevent.RightCtrl {
+		event := b.buf[i]
+		// ignore non-interesting key events
+		if event.k.Key != inputevent.RightCtrl {
 			continue
 		}
-		if e.t.UnixMilli() <= after.UnixMilli() {
+		// if the the newest key happen before the after value,
+		// then there is no point on continuing
+		if event.t.Before(after) {
 			return false, time.Time{}
 		}
+		// since we look from the newest, we try to find a pair of up-down, not down-up
+		// on up, value of c will be odd
+		// on down, value of c will be even
 		switch {
-		case c == 1 && e.k.Action == inputevent.KeyActionUp:
-			t = e.t
+		// c value starts at 1, so this case is for the very first up event
+		case c == 1 && event.k.Action == inputevent.KeyActionUp:
+			// we set this event as the time the toggle key store happen
+			t = event.t
+			// and continue to other case where we handle all (not only the first) key up event
 			fallthrough
-		case c%2 != 0 && e.k.Action == inputevent.KeyActionUp:
+		// this case handle key up event
+		case c%2 != 0 && event.k.Action == inputevent.KeyActionUp:
 			c++
-		case c%2 == 0 && e.k.Action == inputevent.KeyActionDown:
+		// this case handle key down event
+		case c%2 == 0 && event.k.Action == inputevent.KeyActionDown:
 			c++
 		}
+		// the value of c will be 4 when we found all complete pairs of up-down
 		if c/2 == 2 {
 			return true, t
 		}
