@@ -15,7 +15,7 @@ typing = []
 indoc = { version = "1", optional = true }
 rusqlite = { version = "0.29", optional = true }
 serde = { version = "1", optional = true }
-thiserror = { version = "1", optional = true }
+thiserror = { version = "2", optional = true }
 
 [dev-dependencies]
 fastrand = "1.8"
