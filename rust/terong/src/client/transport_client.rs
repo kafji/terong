@@ -1,5 +1,6 @@
 use crate::{
     log_error,
+    tls::create_tls_connector,
     transport::{
         protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, Transport,
@@ -15,7 +16,6 @@ use tokio::{
     task::{self, JoinHandle},
     time::{interval_at, sleep, Instant, MissedTickBehavior},
 };
-use tokio_native_tls::native_tls;
 use tracing::{debug, error, info};
 
 /// Time it takes before client giving up on connecting to the server.
@@ -36,15 +36,11 @@ pub fn start(args: TransportClient, event_tx: mpsc::Sender<InputEvent>) -> JoinH
 }
 
 async fn run_transport(args: TransportClient, event_tx: mpsc::Sender<InputEvent>) {
-    let identity = native_tls::Identity::from_pkcs8(&args.tls_certs[0].0, &args.tls_key.0).unwrap();
-    let server_cert = native_tls::Certificate::from_pem(&args.server_tls_certs[0].0).unwrap();
-    let tls_connector = native_tls::TlsConnector::builder()
-        .identity(identity)
-        .disable_built_in_roots(true)
-        .add_root_certificate(server_cert)
-        .build()
-        .unwrap()
-        .into();
+    let tls_connector = create_tls_connector(
+        &args.tls_certs[0].0,
+        &args.tls_key.0,
+        &args.server_tls_certs[0].0,
+    );
 
     let mut retry_count = 0;
 
@@ -106,7 +102,7 @@ async fn connect(
     server_addr: &SocketAddr,
     event_tx: &mpsc::Sender<InputEvent>,
     retry_count: &mut u8,
-    tls_connector: &tokio_native_tls::TlsConnector,
+    tls_connector: &tokio_rustls::TlsConnector,
 ) -> Result<(), ConnectError> {
     info!(?server_addr, "connecting to server");
 
@@ -126,7 +122,13 @@ async fn connect(
     *retry_count = 0;
     debug!("retry count reset to zero");
 
-    let stream = tls_connector.connect("", stream).await.unwrap();
+    let stream = tls_connector
+        .connect(
+            rustls_pki_types::ServerName::IpAddress(server_addr.ip().into()),
+            stream,
+        )
+        .await
+        .unwrap();
     let transport: ClientTransport = Transport::new(stream);
 
     let session = Session {
@@ -167,11 +169,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
     } = session;
 
     let ping_ticker_interval = Duration::from_secs(15);
-    let mut ping_ticker = {
-        let mut ticker = interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        ticker
-    };
+    let mut ping_ticker =
+        { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
 
     let mut local_ping_counter = 1;
 

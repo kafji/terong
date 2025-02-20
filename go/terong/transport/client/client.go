@@ -2,8 +2,6 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -38,60 +36,29 @@ type Config struct {
 	ServerTLSCertPath string
 }
 
-func newTLSConfig(cfg *Config) (*tls.Config, error) {
-	cert, err := os.ReadFile(cfg.TLSCertPath)
+func Start(ctx context.Context, cfg *Config) *Handle {
+	clientCert, err := os.ReadFile(cfg.TLSCertPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read tls cert file: %v", err)
+		err := fmt.Errorf("failed to read tls cert file: %v", err)
+		panic(err)
 	}
-
-	key, err := os.ReadFile(cfg.TLSKeyPath)
+	clientKey, err := os.ReadFile(cfg.TLSKeyPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read tls cert file: %v", err)
+		err := fmt.Errorf("failed to read tls cert file: %v", err)
+		panic(err)
 	}
-
-	keyPair, err := tls.X509KeyPair(cert, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse key pair: %v", err)
-	}
-
 	serverCert, err := os.ReadFile(cfg.ServerTLSCertPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read server tls cert file: %v", err)
+		err := fmt.Errorf("failed to read server tls cert file: %v", err)
+		panic(err)
 	}
 
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(serverCert)
-
-	return &tls.Config{
-		Certificates:       []tls.Certificate{keyPair},
-		RootCAs:            pool,
-		InsecureSkipVerify: true,
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			opts := x509.VerifyOptions{
-				Roots: pool,
-			}
-			_, err := cs.PeerCertificates[0].Verify(opts)
-			if err != nil {
-				slog.Debug("failed to verify peer cert", "error", err)
-			}
-			return err
-		},
-	}, nil
-}
-
-func Start(ctx context.Context, cfg *Config) *Handle {
 	h := &Handle{inputs: make(chan inputevent.InputEvent)}
 
 	go func() {
 		defer close(h.inputs)
 
-		tlsCfg, err := newTLSConfig(cfg)
-		if err != nil {
-			h.err = err
-			return
-		}
-
-		dialer := &tls.Dialer{NetDialer: &net.Dialer{Timeout: transport.ConnectTimeout}, Config: tlsCfg}
+		dialer := transport.CreateTLSDialer(clientCert, clientKey, serverCert)(&net.Dialer{Timeout: transport.ConnectTimeout})
 
 		var sess *session
 		defer func() {

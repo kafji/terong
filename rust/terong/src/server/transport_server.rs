@@ -1,5 +1,6 @@
 use crate::{
     log_error,
+    tls::create_tls_acceptor,
     transport::{
         protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, Transport,
@@ -20,7 +21,6 @@ use tokio::{
     task::{self, JoinError, JoinHandle},
     time::{interval_at, Instant, MissedTickBehavior},
 };
-use tokio_native_tls::native_tls;
 use tracing::{debug, error, info};
 
 type ServerTransport = Transport<ClientMessage, ServerMessage>;
@@ -30,8 +30,6 @@ pub struct TransportServer {
     pub port: u16,
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
-
-    #[allow(unused)]
     pub client_tls_certs: Vec<Certificate>,
 }
 
@@ -40,13 +38,11 @@ pub fn start(args: TransportServer, event_rx: mpsc::Receiver<InputEvent>) -> Joi
 }
 
 async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<InputEvent>) {
-    let identity = native_tls::Identity::from_pkcs8(&args.tls_certs[0].0, &args.tls_key.0).unwrap();
-    // schannel doesn't provide client cert verification https://learn.microsoft.com/en-us/windows/win32/secauthn/performing-authentication-using-schannel
-    // and native-tls doesn't allow injecting peer verification
-    let tls_acceptor = native_tls::TlsAcceptor::builder(identity)
-        .build()
-        .unwrap()
-        .into();
+    let tls_acceptor = create_tls_acceptor(
+        &args.tls_certs[0].0,
+        &args.tls_key.0,
+        &args.client_tls_certs[0].0,
+    );
 
     let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), args.port);
 
@@ -99,7 +95,7 @@ async fn handle_incoming_connection(
     session_handler: &mut Option<SessionHandle>,
     stream: TcpStream,
     peer_addr: SocketAddr,
-    tls_acceptor: &tokio_native_tls::TlsAcceptor,
+    tls_acceptor: &tokio_rustls::TlsAcceptor,
 ) {
     info!(?peer_addr, "received incoming connection");
     if session_handler.is_none() {
@@ -197,11 +193,8 @@ async fn run_session(session: Session) -> Result<(), Error> {
     } = session;
 
     let ping_ticker_interval = Duration::from_secs(20);
-    let mut ping_ticker = {
-        let mut ticker = interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        ticker
-    };
+    let mut ping_ticker =
+        { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
     let mut local_ping_counter = 1;
 
     loop {

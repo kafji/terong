@@ -14,10 +14,11 @@ hex = "0.4"
 macross = { path = "../macross", features = ["typing"] }
 paste = "1"
 rustls = "0.23"
+rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-tokio-native-tls = "0.3"
+tokio-rustls = "0.26"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
@@ -40,3 +41,4 @@ windows = { version = "0.59", features = [
 
 [dev-dependencies]
 criterion = "0.5"
+rcgen = "0.13"

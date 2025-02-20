@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -24,37 +22,6 @@ type Config struct {
 	ClientTLSCertPath string
 }
 
-func newTLSConfig(cfg *Config) (*tls.Config, error) {
-	cert, err := os.ReadFile(cfg.TLSCertPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tls cert file: %v", err)
-	}
-
-	key, err := os.ReadFile(cfg.TLSKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read tls key file: %v", err)
-	}
-
-	keyPair, err := tls.X509KeyPair(cert, key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse key pair: %v", err)
-	}
-
-	clientCert, err := os.ReadFile(cfg.ClientTLSCertPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read client cert file: %v", err)
-	}
-
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(clientCert)
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{keyPair},
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		ClientCAs:    pool,
-	}, nil
-}
-
 func Start(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) <-chan error {
 	done := make(chan error, 1)
 	go func() {
@@ -65,9 +32,20 @@ func Start(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent
 }
 
 func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) error {
-	tlsCfg, err := newTLSConfig(cfg)
+	serverCert, err := os.ReadFile(cfg.TLSCertPath)
 	if err != nil {
-		return err
+		err := fmt.Errorf("failed to read tls cert file: %v", err)
+		panic(err)
+	}
+	serverKey, err := os.ReadFile(cfg.TLSKeyPath)
+	if err != nil {
+		err := fmt.Errorf("failed to read tls key file: %v", err)
+		panic(err)
+	}
+	clientCert, err := os.ReadFile(cfg.ClientTLSCertPath)
+	if err != nil {
+		err := fmt.Errorf("failed to read client cert file: %v", err)
+		panic(err)
 	}
 
 	slog.Info("listening for connection", "address", cfg.Addr)
@@ -75,7 +53,7 @@ func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) 
 	if err != nil {
 		return fmt.Errorf("failed to listen: %v", err)
 	}
-	listener = tls.NewListener(listener, tlsCfg)
+	listener = transport.CreateTLSListener(serverCert, serverKey, clientCert)(listener)
 	defer listener.Close()
 
 	receptionist := newReceptionist(listener)
