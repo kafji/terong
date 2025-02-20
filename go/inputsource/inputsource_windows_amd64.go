@@ -3,6 +3,20 @@ package inputsource
 /*
 #cgo CFLAGS: -Wall -g -O2
 #include "hook_windows_amd64.h"
+
+#cgo noescape get_hook_event
+#cgo nocallback get_hook_event
+
+#cgo noescape set_eat_input
+#cgo nocallback set_eat_input
+
+#cgo noescape get_mouse_hook_proc_worst
+#cgo nocallback get_mouse_hook_proc_worst
+
+#cgo noescape get_keyboard_hook_proc_worst
+#cgo nocallback get_keyboard_hook_proc_worst
+
+#cgo nocallback get_message
 */
 import "C"
 
