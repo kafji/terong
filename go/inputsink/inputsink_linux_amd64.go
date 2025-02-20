@@ -6,6 +6,9 @@ package inputsink
 #include "proxy_linux_amd64.h"
 #include <stdlib.h>
 #include <string.h>
+
+#cgo noescape write_events
+#cgo nocallback write_events
 */
 import "C"
 
