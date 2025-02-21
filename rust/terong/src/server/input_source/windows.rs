@@ -33,7 +33,7 @@ pub fn start(event_tx: mpsc::Sender<InputEvent>) -> task::JoinHandle<()> {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum MessageCode {
-    InputEvent = WM_APP,
+    InputEvent = WM_APP + 1,
 }
 
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
@@ -68,7 +68,7 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 
     loop {
         // set cursor position to its locked position if we're grabbing input
-        if consume_input() {
+        if get_consume_input() {
             // capture cursor position, so we can restore it later
             if old_cursor_pos.is_none() {
                 let cursor_pos = {
@@ -93,11 +93,11 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
         // wait for message
         let ok = unsafe { GetMessageW(&mut msg, None, 0, 0) };
         match ok.0 {
-            -1 => unsafe {
-                let err = GetLastError();
-                error!(?err);
+            -1 => {
+                let err = unsafe { GetLastError() };
+                error!(error = ?err);
                 break;
-            },
+            }
             0 => {
                 debug!("received quit message");
                 break;
@@ -107,11 +107,11 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                     n if n == MessageCode::InputEvent as u32 => {
                         let event = {
                             // acquire input event
-                            let (new_event, _) = *unsafe {
+                            let (new_event, _) = unsafe {
                                 // get pointer to input event from lparam
                                 let ptr_event = msg.lParam.0 as *mut (LocalInputEvent, Duration);
                                 // the box will ensure it will be freed
-                                Box::from_raw(ptr_event)
+                                *Box::from_raw(ptr_event)
                             };
                             event_mapper.map(new_event)
                         };
@@ -119,9 +119,9 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         // propagate input event to the controller
                         let should_consume_input = controller.on_input_event(event).unwrap();
 
-                        if should_consume_input != consume_input() {
-                            // consuming input is turned off, restore old cursor position
+                        if should_consume_input != get_consume_input() {
                             if !should_consume_input {
+                                // consuming input is turned off, restore old cursor position
                                 restore_mouse_position(old_cursor_pos.take());
                             }
 
@@ -199,7 +199,7 @@ thread_local! {
 }
 
 /// Returns `true` if we should consume inputs.
-fn consume_input() -> bool {
+fn get_consume_input() -> bool {
     CONSUME_INPUT.with(|x| x.get())
 }
 
@@ -233,7 +233,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
             let y = hook_event.pt.y as _;
             let pos = MousePosition { x, y };
 
-            if consume_input() {
+            if get_consume_input() {
                 let movement = get_cursor_locked_pos().delta_to(&pos);
                 LocalInputEvent::MouseMove(movement)
             } else {
@@ -312,7 +312,7 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
     }
     debug!("mouse_hook_proc takes: {} ms", t1 / 1000 - t0 / 1000);
 
-    if consume_input() {
+    if get_consume_input() {
         LRESULT(1)
     } else {
         unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
@@ -358,7 +358,7 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
     }
     debug!("keyboard_hook_proc takes: {} ms", t1 / 1000 - t0 / 1000);
 
-    if consume_input() {
+    if get_consume_input() {
         LRESULT(1)
     } else {
         unsafe { CallNextHookEx(None, ncode, wparam, lparam) }
@@ -404,7 +404,7 @@ impl Drop for Unhooker {
     fn drop(&mut self) {
         unsafe {
             if let Err(err) = UnhookWindowsHookEx(self.0) {
-                error!("failed to unhook {:?}: {}", self.0, err);
+                error!(error = ?err, "failed to unhook {:?}", self.0);
             }
         }
     }
