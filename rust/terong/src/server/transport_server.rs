@@ -1,5 +1,4 @@
 use crate::{
-    log_error,
     tls::create_tls_acceptor,
     transport::{
         protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
@@ -19,7 +18,7 @@ use tokio::{
     select,
     sync::mpsc::{self, error::SendError},
     task::{self, JoinError, JoinHandle},
-    time::{interval_at, Instant, MissedTickBehavior},
+    time::{interval_at, Instant},
 };
 use tracing::{debug, error, info};
 
@@ -169,7 +168,7 @@ fn spawn_session(peer_addr: SocketAddr, transport: ServerTransport) -> SessionHa
     let task = task::spawn(async move {
         // handle session error if any
         if let Err(err) = run_session(session).await {
-            log_error!(err);
+            error!(error = ?err);
         };
 
         info!("session terminated");

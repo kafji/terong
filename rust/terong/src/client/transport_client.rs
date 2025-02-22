@@ -1,5 +1,4 @@
 use crate::{
-    log_error,
     tls::create_tls_connector,
     transport::{
         protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
@@ -14,7 +13,7 @@ use tokio::{
     select,
     sync::mpsc,
     task::{self, JoinHandle},
-    time::{interval_at, sleep, Instant, MissedTickBehavior},
+    time::{interval_at, sleep, Instant},
 };
 use tracing::{debug, error, info};
 
@@ -53,7 +52,7 @@ async fn run_transport(args: TransportClient, event_tx: mpsc::Sender<InputEvent>
         )
         .await
         {
-            log_error!(err);
+            error!(error = ?err);
 
             if retry_count >= 5 {
                 info!("giving up after {} retries", retry_count);

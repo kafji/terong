@@ -38,11 +38,8 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
 
     let server = {
         let tls_certs = read_certs(&tls_cert_path).await?;
-
         let tls_key = read_private_key(&tls_key_path).await?;
-
         let client_tls_certs = read_certs(&client_tls_cert_path).await?;
-
         let args = TransportServer {
             port,
             tls_certs,
