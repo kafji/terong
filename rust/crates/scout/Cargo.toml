@@ -1,7 +1,6 @@
 [package]
 name = "scout"
-version = "0.0.0"
-edition = "2021"
+edition.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.59", features = [

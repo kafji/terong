@@ -1,5 +1,5 @@
 [workspace]
-members = ["macross", "rf", "sage", "scout", "terong"]
+members = ["crates/*"]
 
-[profile.release]
-debug = "line-tables-only"
+[workspace.package]
+edition = "2024"

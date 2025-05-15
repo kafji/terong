@@ -1,7 +1,6 @@
 [package]
 name = "macross"
-version = "0.0.0"
-edition = "2021"
+edition.workspace = true
 
 [features]
 all = ["get_port", "typing", "rusqlite", "secret", "serde"]

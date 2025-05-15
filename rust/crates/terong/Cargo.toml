@@ -1,7 +1,6 @@
 [package]
 name = "terong"
-version = "0.0.0"
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 anyhow = "1"
