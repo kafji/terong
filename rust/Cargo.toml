@@ -1,5 +1,9 @@
 [workspace]
 members = ["crates/*"]
+resolver = "3"
 
 [workspace.package]
 edition = "2024"
+
+[workspace.dependencies]
+tokio = "~1.43"
