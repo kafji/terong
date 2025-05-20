@@ -2,6 +2,10 @@
 name = "terong"
 edition.workspace = true
 
+[[bench]]
+name = "bench"
+harness = false
+
 [dependencies]
 anyhow = "1"
 bincode = "1"
@@ -37,5 +41,5 @@ windows = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.6"
 rcgen = "0.13"
