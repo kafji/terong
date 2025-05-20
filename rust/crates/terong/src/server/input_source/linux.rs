@@ -2,8 +2,8 @@ use super::{controller::InputController, event::LocalInputEvent};
 use crate::transport::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection};
 use anyhow::Error;
 use evdev_rs::{
-    enums::{EventCode, EV_REL},
     Device, GrabMode, InputEvent as LinuxInputEvent, ReadFlag,
+    enums::{EV_REL, EventCode},
 };
 use futures::future;
 use std::{

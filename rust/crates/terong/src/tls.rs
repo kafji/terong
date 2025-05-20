@@ -1,5 +1,5 @@
-use rustls::{server::WebPkiClientVerifier, RootCertStore};
-use rustls_pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use rustls::{RootCertStore, server::WebPkiClientVerifier};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::sync::Arc;
 
 pub fn create_tls_acceptor(
@@ -51,7 +51,7 @@ pub fn create_tls_connector(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcgen::{date_time_ymd, DistinguishedName, DnType, KeyPair, SanType};
+    use rcgen::{DistinguishedName, DnType, KeyPair, SanType, date_time_ymd};
     use rustls_pki_types::ServerName;
     use std::{error::Error, str::FromStr};
     use tokio::{

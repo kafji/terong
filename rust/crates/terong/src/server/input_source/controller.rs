@@ -120,7 +120,7 @@ where
     fn recent_pressed_keys<'a, 'b>(
         &'a self,
         since: Option<&'b OrderKey>,
-    ) -> impl Iterator<Item = (&KeyCode, &OrderKey)>
+    ) -> impl Iterator<Item = (&'a KeyCode, &'a OrderKey)>
     where
         'b: 'a,
     {
@@ -206,15 +206,17 @@ impl<'a, T> RecentKeyPresses<'a, T> {
         };
 
         // if key down not in the queue, find it in events
-        let key_down = key_down.or_else(|| loop {
-            match self.events.next() {
-                Some(event) => match event {
-                    KeyPressEvent::Down(x) => break Some(x),
-                    // found starting event other than key down
-                    _ => continue,
-                },
-                // iterator is exhausted
-                None => break None,
+        let key_down = key_down.or_else(|| {
+            loop {
+                match self.events.next() {
+                    Some(event) => match event {
+                        KeyPressEvent::Down(x) => break Some(x),
+                        // found starting event other than key down
+                        _ => continue,
+                    },
+                    // iterator is exhausted
+                    None => break None,
+                }
             }
         });
 
@@ -243,16 +245,18 @@ impl<'a, T> RecentKeyPresses<'a, T> {
         };
 
         // if key up not in the queue, find it in events
-        let key_up = key_up.or_else(|| loop {
-            match self.events.next() {
-                Some(event) => match event {
-                    KeyPressEvent::Up(x) if x.key == key => break Some(x),
-                    other_key_down => {
-                        self.queue.push_front(other_key_down);
-                        continue;
-                    }
-                },
-                None => break None,
+        let key_up = key_up.or_else(|| {
+            loop {
+                match self.events.next() {
+                    Some(event) => match event {
+                        KeyPressEvent::Up(x) if x.key == key => break Some(x),
+                        other_key_down => {
+                            self.queue.push_front(other_key_down);
+                            continue;
+                        }
+                    },
+                    None => break None,
+                }
             }
         });
 

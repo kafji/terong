@@ -4,7 +4,7 @@ mod transport_server;
 pub mod config;
 
 use crate::{
-    config::{read_certs, read_private_key, Config},
+    config::{Config, read_certs, read_private_key},
     logging::init_tracing,
     server::{config::ServerConfig, transport_server::TransportServer},
 };

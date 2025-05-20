@@ -6,22 +6,22 @@ use std::{
     slice,
 };
 use windows::{
-    core::HSTRING,
     Win32::{
         Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE},
         Storage::FileSystem::{
-            CreateFileW, GetLogicalDriveStringsW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, OPEN_EXISTING,
+            CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            GetLogicalDriveStringsW, OPEN_EXISTING,
         },
         System::{
+            IO::DeviceIoControl,
             Ioctl::{
                 FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DATA_V0,
                 USN_JOURNAL_DATA_V0, USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE,
                 USN_REASON_RENAME_NEW_NAME, USN_REASON_RENAME_OLD_NAME, USN_RECORD_V2,
             },
-            IO::DeviceIoControl,
         },
     },
+    core::HSTRING,
 };
 
 pub fn run() {
@@ -144,7 +144,7 @@ impl UsnRecord {
     /// References:
     /// - https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
     unsafe fn from_v2_ptr(ptr: *const USN_RECORD_V2) -> (Self, usize) {
-        let record: &USN_RECORD_V2 = &*ptr;
+        let record: &USN_RECORD_V2 = unsafe { &*ptr };
         // dbg!(record);
 
         assert_eq!(record.MajorVersion, 2);
@@ -155,9 +155,10 @@ impl UsnRecord {
 
         let reason = record.Reason;
 
-        let file_name_ptr = (ptr as *const u16).byte_add(record.FileNameOffset as _);
-        let file_name =
-            slice::from_raw_parts::<u16>(file_name_ptr, (record.FileNameLength / 2) as usize);
+        let file_name_ptr = unsafe { (ptr as *const u16).byte_add(record.FileNameOffset as _) };
+        let file_name = unsafe {
+            slice::from_raw_parts::<u16>(file_name_ptr, (record.FileNameLength / 2) as usize)
+        };
         let file_name = String::from_utf16_lossy(file_name);
 
         (

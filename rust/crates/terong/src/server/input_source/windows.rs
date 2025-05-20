@@ -3,7 +3,7 @@ use super::{
     event::{LocalInputEvent, MousePosition},
 };
 use crate::transport::protocol::{
-    windows::VirtualKey, InputEvent, KeyCode, MouseButton, MouseScrollDirection,
+    InputEvent, KeyCode, MouseButton, MouseScrollDirection, windows::VirtualKey,
 };
 use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
@@ -14,12 +14,13 @@ use windows::Win32::{
     Foundation::{GetLastError, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, SetCursorPos,
-        SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-        WHEEL_DELTA, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
-        WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
-        WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
+        CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, HC_ACTION, HHOOK,
+        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PostMessageW, SPI_GETWORKAREA,
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursorPos, SetWindowsHookExW,
+        SystemParametersInfoW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WHEEL_DELTA,
+        WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
     },
 };
 

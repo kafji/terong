@@ -1,12 +1,12 @@
 use crate::{
     tls::create_tls_acceptor,
     transport::{
-        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, Transport,
+        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
     },
 };
 use anyhow::{Context, Error};
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 use std::{
     fmt::Debug,
     net::{SocketAddr, SocketAddrV4},
@@ -18,7 +18,7 @@ use tokio::{
     select,
     sync::mpsc::{self, error::SendError},
     task::{self, JoinError, JoinHandle},
-    time::{interval_at, Instant},
+    time::{Instant, interval_at},
 };
 use tracing::{debug, error, info};
 
