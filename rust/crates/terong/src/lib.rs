@@ -7,3 +7,9 @@ mod typing;
 
 pub mod client;
 pub mod server;
+
+#[cfg(feature = "bench")]
+pub mod event_buffer;
+
+#[cfg(not(feature = "bench"))]
+mod event_buffer;

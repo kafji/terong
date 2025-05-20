@@ -1,7 +1,7 @@
-mod input_source;
 mod transport_server;
 
 pub mod config;
+pub mod input_source;
 
 use crate::{
     config::{Config, read_certs, read_private_key},

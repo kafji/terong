@@ -2,6 +2,10 @@
 name = "terong"
 edition.workspace = true
 
+[features]
+default = ["bench"]
+bench = []
+
 [[bench]]
 name = "bench"
 harness = false
