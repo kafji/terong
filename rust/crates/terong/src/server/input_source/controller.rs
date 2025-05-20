@@ -1,11 +1,12 @@
 use super::event::LocalInputEvent;
 use crate::{
     event_buffer::EventBuffer,
+    event_logger::EventLogger,
     transport::protocol::{InputEvent, KeyCode},
 };
 use anyhow::Error;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::{fs::File, sync::mpsc};
 use tracing::debug;
 
 pub struct InputController {
@@ -18,27 +19,36 @@ pub struct InputController {
     relay: bool,
     /// Last time we detect inputs for toggling the relay flag.
     relay_toggled_at: Option<Instant>,
+    event_logger: EventLogger<File, LocalInputEvent>,
 }
 
 impl InputController {
-    pub fn new(event_tx: mpsc::Sender<InputEvent>) -> Self {
+    pub async fn new(event_tx: mpsc::Sender<InputEvent>) -> Result<Self, anyhow::Error> {
         let event_buf = EventBuffer::new(|new, old| {
             // Evict events older than 300 milliseconds from the newest event.
             let d = *new - *old;
             d > Duration::from_millis(300)
         });
-        Self {
+        let event_logger = {
+            let log_file = File::create("./events.log").await?;
+            EventLogger::new(log_file)
+        };
+        let this = Self {
             event_buf,
             event_tx,
             relay: false,
             relay_toggled_at: None,
-        }
+            event_logger,
+        };
+        Ok(this)
     }
 
     /// Returns boolean that denote if the next successive inputs should be
     /// captured or not.
-    pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
+    pub async fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
         debug!(?event, "received local input event");
+
+        self.event_logger.log(event).await?;
 
         self.event_buf.push_event(event, Instant::now());
 

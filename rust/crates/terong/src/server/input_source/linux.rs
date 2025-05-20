@@ -11,9 +11,10 @@ use std::{
     fs::File,
     ops::{Deref, DerefMut},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::{
+    sync::Mutex,
     sync::mpsc,
     task::{self, JoinHandle},
     try_join,
@@ -36,9 +37,7 @@ struct Ungrabber(Device);
 
 impl Drop for Ungrabber {
     fn drop(&mut self) {
-        self.0
-            .grab(GrabMode::Ungrab)
-            .expect("failed to ungrab device");
+        self.0.grab(GrabMode::Ungrab).expect("failed to ungrab device");
     }
 }
 
@@ -66,27 +65,27 @@ fn read_input_source<F>(
     device: &mut Device,
     controller: Arc<Mutex<InputController>>,
     mut map: F,
-) -> Result<(), Error>
+) -> impl Future<Output = Result<(), Error>> + Send
 where
-    F: FnMut(&LinuxInputEvent) -> Option<LocalInputEvent>,
+    F: FnMut(&LinuxInputEvent) -> Option<LocalInputEvent> + Send + 'static,
 {
-    loop {
-        let (_, event) = device.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
-        let event = map(&event);
-        if let Some(event) = event {
-            let mut controller = controller.lock().unwrap();
-            let consume_input = controller.on_input_event(event)?;
-            set_consume_input(device, consume_input)?;
+    async move {
+        loop {
+            let (_, event) = device.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
+            let event = map(&event);
+            if let Some(event) = event {
+                let consume_input = {
+                    let mut controller = controller.lock().await;
+                    controller.on_input_event(event).await?
+                };
+                set_consume_input(device, consume_input)?;
+            }
         }
     }
 }
 
 fn set_consume_input(device: &mut Device, flag: bool) -> Result<(), Error> {
-    let mode = if flag {
-        GrabMode::Grab
-    } else {
-        GrabMode::Ungrab
-    };
+    let mode = if flag { GrabMode::Grab } else { GrabMode::Ungrab };
     device.grab(mode).map_err(Into::into)
 }
 
@@ -96,9 +95,10 @@ fn run(
     touchpad_device: Option<PathBuf>,
     event_tx: mpsc::Sender<InputEvent>,
 ) -> Result<JoinHandle<()>, Error> {
-    let controller = Arc::new(Mutex::new(InputController::new(event_tx)));
-
     let handle = task::spawn(async move {
+        let controller = InputController::new(event_tx).await.unwrap();
+        let controller = Arc::new(Mutex::new(controller));
+
         let keyboard = keyboard_device
             .map(|x| spawn_listener(x, controller.clone(), map_keyboard_event))
             .transpose()
@@ -123,11 +123,7 @@ fn run(
     Ok(handle)
 }
 
-fn spawn_listener<F>(
-    device: PathBuf,
-    controller: Arc<Mutex<InputController>>,
-    map: F,
-) -> Result<JoinHandle<()>, Error>
+fn spawn_listener<F>(device: PathBuf, controller: Arc<Mutex<InputController>>, map: F) -> Result<JoinHandle<()>, Error>
 where
     F: FnMut(&LinuxInputEvent) -> Option<LocalInputEvent> + Send + 'static,
 {
@@ -137,17 +133,15 @@ where
         Ungrabber::from(dev)
     };
 
-    let handle = task::spawn_blocking(move || {
-        read_input_source(&mut device, controller, map).unwrap();
+    let handle = task::spawn(async move {
+        read_input_source(&mut device, controller, map).await.unwrap();
     });
 
     Ok(handle)
 }
 
 fn map_keyboard_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
-    let LinuxInputEvent {
-        event_code, value, ..
-    } = x;
+    let LinuxInputEvent { event_code, value, .. } = x;
     match event_code {
         EventCode::EV_KEY(ev_key) => {
             let btn = MouseButton::from_ev_key(*ev_key);
@@ -172,23 +166,17 @@ fn map_keyboard_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
 }
 
 fn map_mouse_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
-    let LinuxInputEvent {
-        event_code, value, ..
-    } = x;
+    let LinuxInputEvent { event_code, value, .. } = x;
     match event_code {
         EventCode::EV_REL(ev_rel) => match ev_rel {
             EV_REL::REL_WHEEL => match value.cmp(&0) {
                 Ordering::Less => LocalInputEvent::MouseScroll {
-                    direction: MouseScrollDirection::Down {
-                        clicks: *value as _,
-                    },
+                    direction: MouseScrollDirection::Down { clicks: *value as _ },
                 }
                 .into(),
                 Ordering::Equal => None,
                 Ordering::Greater => LocalInputEvent::MouseScroll {
-                    direction: MouseScrollDirection::Up {
-                        clicks: *value as _,
-                    },
+                    direction: MouseScrollDirection::Up { clicks: *value as _ },
                 }
                 .into(),
             },

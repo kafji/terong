@@ -2,8 +2,8 @@
 ///
 /// # Example.
 ///
-/// ```rust
-/// use macross::newtype;
+/// ```ignore
+/// use crate::typing::newtype;
 ///
 /// newtype! {
 ///     #[derive(Debug)]

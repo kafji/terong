@@ -6,6 +6,7 @@ mod transport;
 mod typing;
 
 pub mod client;
+pub mod event_logger;
 pub mod server;
 
 #[cfg(feature = "bench")]

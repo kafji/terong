@@ -1,6 +1,7 @@
 use crate::transport::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Copy, Clone, Debug)]
 pub enum LocalInputEvent {
     MousePosition(MousePosition),
     MouseMove(MouseMovement),
@@ -14,7 +15,7 @@ pub enum LocalInputEvent {
     KeyUp { key: KeyCode },
 }
 
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Copy, Clone, Default, Debug)]
 pub struct MouseMovement {
     pub dx: i16,
     pub dy: i16,
@@ -26,7 +27,7 @@ impl From<(i16, i16)> for MouseMovement {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Copy, Clone, Default, Debug)]
 pub struct MousePosition {
     pub x: i16,
     pub y: i16,
@@ -52,18 +53,10 @@ impl LocalInputEvent {
     /// Converts local input event into protocol input event.
     pub fn into_input_event(self) -> Option<InputEvent> {
         match self {
-            LocalInputEvent::MouseMove(MouseMovement { dx, dy }) => {
-                InputEvent::MouseMove { dx, dy }.into()
-            }
-            LocalInputEvent::MouseButtonDown { button } => {
-                InputEvent::MouseButtonDown { button }.into()
-            }
-            LocalInputEvent::MouseButtonUp { button } => {
-                InputEvent::MouseButtonUp { button }.into()
-            }
-            LocalInputEvent::MouseScroll { direction } => {
-                InputEvent::MouseScroll { direction }.into()
-            }
+            LocalInputEvent::MouseMove(MouseMovement { dx, dy }) => InputEvent::MouseMove { dx, dy }.into(),
+            LocalInputEvent::MouseButtonDown { button } => InputEvent::MouseButtonDown { button }.into(),
+            LocalInputEvent::MouseButtonUp { button } => InputEvent::MouseButtonUp { button }.into(),
+            LocalInputEvent::MouseScroll { direction } => InputEvent::MouseScroll { direction }.into(),
             LocalInputEvent::KeyDown { key } => InputEvent::KeyDown { key }.into(),
             LocalInputEvent::KeyRepeat { key } => InputEvent::KeyRepeat { key }.into(),
             LocalInputEvent::KeyUp { key } => InputEvent::KeyUp { key }.into(),
@@ -80,32 +73,14 @@ mod tests {
     fn test_delta_to() {
         let original = MousePosition { x: 1, y: 1 };
         assert_eq!(original.delta_to(&original), (0, 0).into());
-        assert_eq!(
-            original.delta_to(&MousePosition { x: 1, y: -1 }),
-            (0, -2).into()
-        );
-        assert_eq!(
-            original.delta_to(&MousePosition { x: -1, y: -1 }),
-            (-2, -2).into()
-        );
-        assert_eq!(
-            original.delta_to(&MousePosition { x: -1, y: 1 }),
-            (-2, 0).into()
-        );
+        assert_eq!(original.delta_to(&MousePosition { x: 1, y: -1 }), (0, -2).into());
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: -1 }), (-2, -2).into());
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: 1 }), (-2, 0).into());
 
         let original = MousePosition { x: 1, y: -1 };
         assert_eq!(original.delta_to(&original), (0, 0).into());
-        assert_eq!(
-            original.delta_to(&MousePosition { x: -1, y: -1 }),
-            (-2, 0).into()
-        );
-        assert_eq!(
-            original.delta_to(&MousePosition { x: -1, y: 1 }),
-            (-2, 2).into()
-        );
-        assert_eq!(
-            original.delta_to(&MousePosition { x: 1, y: 1 }),
-            (0, 2).into()
-        );
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: -1 }), (-2, 0).into());
+        assert_eq!(original.delta_to(&MousePosition { x: -1, y: 1 }), (-2, 2).into());
+        assert_eq!(original.delta_to(&MousePosition { x: 1, y: 1 }), (0, 2).into());
     }
 }
