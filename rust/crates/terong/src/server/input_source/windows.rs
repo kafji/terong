@@ -5,6 +5,7 @@ use super::{
 use crate::transport::protocol::{
     InputEvent, KeyCode, MouseButton, MouseScrollDirection, windows::VirtualKey,
 };
+use futures::executor::block_on;
 use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
@@ -38,7 +39,7 @@ enum MessageCode {
 }
 
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
-    let mut controller = InputController::new(event_tx);
+    let mut controller = block_on(InputController::new(event_tx)).unwrap();
 
     // get module handle for this application
     let module = unsafe { GetModuleHandleW(None) }.expect("failed to get current module handle");
@@ -118,7 +119,8 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         };
 
                         // propagate input event to the controller
-                        let should_consume_input = controller.on_input_event(event).unwrap();
+                        let should_consume_input =
+                            block_on(controller.on_input_event(event)).unwrap();
 
                         if should_consume_input != get_consume_input() {
                             if !should_consume_input {
