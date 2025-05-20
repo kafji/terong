@@ -1,10 +1,10 @@
 pub mod protocol;
 
 use self::protocol::{ClientMessage, ServerMessage};
+use crate::typing::newtype;
 use anyhow::Error;
 use bytes::{Buf, BufMut, BytesMut};
-use macross::newtype;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     convert::TryInto,
     fmt::{self, Debug},

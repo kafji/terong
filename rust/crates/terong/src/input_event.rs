@@ -338,8 +338,8 @@ pub mod linux {
 #[cfg(target_os = "windows")]
 pub mod windows {
     use super::*;
+    use crate::typing::newtype;
     use ::windows::Win32::UI::Input::KeyboardAndMouse::*;
-    use macross::newtype;
 
     newtype! {
         /// Wrapper type for Windows virtual key codes as defined in https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes.

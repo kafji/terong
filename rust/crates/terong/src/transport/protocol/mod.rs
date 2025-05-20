@@ -1,7 +1,7 @@
 mod heartbeat;
 mod input_event;
 
-use macross::impl_from;
+use crate::typing::impl_from;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 

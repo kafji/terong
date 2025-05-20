@@ -1,19 +1,19 @@
 use crate::{
     tls::create_tls_connector,
     transport::{
-        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
         Certificate, PrivateKey, Transport,
+        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
     },
+    typing::impl_from,
 };
 use anyhow::Error;
-use macross::impl_from;
 use std::{fmt, net::SocketAddr, time::Duration};
 use tokio::{
     net::TcpStream,
     select,
     sync::mpsc,
     task::{self, JoinHandle},
-    time::{interval_at, sleep, Instant},
+    time::{Instant, interval_at, sleep},
 };
 use tracing::{debug, error, info};
 

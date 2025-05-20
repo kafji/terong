@@ -14,7 +14,6 @@
 ///
 /// assert_eq!("Easy St.", addr.as_ref());
 /// ```
-#[macro_export]
 macro_rules! newtype {
     {
         $(#[$($meta:meta)*])*
@@ -43,7 +42,6 @@ macro_rules! newtype {
     };
 }
 
-#[macro_export]
 macro_rules! impl_from {
     ($dst:ty, { $($f:expr => $src:ty,)* }) => {
         $(
@@ -55,3 +53,6 @@ macro_rules! impl_from {
         )*
     };
 }
+
+pub(crate) use impl_from;
+pub(crate) use newtype;
