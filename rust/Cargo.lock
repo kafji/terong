@@ -1271,6 +1271,7 @@ name = "terong"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "bincode",
  "bytes",
  "ciborium",
@@ -1287,7 +1288,6 @@ dependencies = [
  "strum",
  "tokio",
  "tokio-rustls",
- "tokio-stream",
  "tokio-test",
  "toml",
  "tracing",
