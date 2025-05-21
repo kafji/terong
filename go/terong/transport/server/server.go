@@ -34,24 +34,24 @@ func Start(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent
 func run(ctx context.Context, cfg *Config, inputs <-chan inputevent.InputEvent) error {
 	serverCert, err := os.ReadFile(cfg.TLSCertPath)
 	if err != nil {
-		err := fmt.Errorf("failed to read tls cert file: %v", err)
+		err := fmt.Errorf("failed to read tls cert file: %w", err)
 		panic(err)
 	}
 	serverKey, err := os.ReadFile(cfg.TLSKeyPath)
 	if err != nil {
-		err := fmt.Errorf("failed to read tls key file: %v", err)
+		err := fmt.Errorf("failed to read tls key file: %w", err)
 		panic(err)
 	}
 	clientCert, err := os.ReadFile(cfg.ClientTLSCertPath)
 	if err != nil {
-		err := fmt.Errorf("failed to read client cert file: %v", err)
+		err := fmt.Errorf("failed to read client cert file: %w", err)
 		panic(err)
 	}
 
 	slog.Info("listening for connection", "address", cfg.Addr)
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", cfg.Addr)
 	if err != nil {
-		return fmt.Errorf("failed to listen: %v", err)
+		return fmt.Errorf("failed to listen: %w", err)
 	}
 	listener = transport.CreateTLSListener(serverCert, serverKey, clientCert)(listener)
 	defer listener.Close()
@@ -116,7 +116,7 @@ func newReceptionist(listener net.Listener) *receptionist {
 		for {
 			conn, err := r.listener.Accept()
 			if err != nil {
-				r.err = fmt.Errorf("failed to accept connection: %v", err)
+				r.err = fmt.Errorf("failed to accept connection: %w", err)
 				return
 			}
 			slog.Info("connected to client", "address", conn.RemoteAddr())
@@ -148,7 +148,7 @@ func newSession(ctx context.Context, conn net.Conn) *session {
 func (s *session) writeInput(input inputevent.InputEvent) error {
 	value, err := cbor.Marshal(&input)
 	if err != nil {
-		return fmt.Errorf("failed to marshal value: %v", err)
+		return fmt.Errorf("failed to marshal value: %w", err)
 	}
 
 	lengthInt := len(value)
@@ -159,7 +159,7 @@ func (s *session) writeInput(input inputevent.InputEvent) error {
 
 	tag, err := transport.TagFor(input)
 	if err != nil {
-		return fmt.Errorf("failed to get tag: %v", err)
+		return fmt.Errorf("failed to get tag: %w", err)
 	}
 
 	frm := transport.Frame{Tag: tag, Length: length, Value: value}
@@ -177,13 +177,13 @@ func runSession(ctx context.Context, sess *session) {
 				case input := <-sess.inputs:
 					slog.Debug("sending input", "input", input)
 					if err := sess.writeInput(input); err != nil {
-						return fmt.Errorf("failed to write input: %v", err)
+						return fmt.Errorf("failed to write input: %w", err)
 					}
 
 				case <-sess.SendPingDeadline():
 					slog.Debug("sending ping")
 					if err := sess.SendPing(); err != nil {
-						return fmt.Errorf("failed to write ping: %v", err)
+						return fmt.Errorf("failed to write ping: %w", err)
 					}
 
 				case <-sess.RecvPingDeadline():

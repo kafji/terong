@@ -69,7 +69,7 @@ func createEvdevDevice() (*C.struct_libevdev, error) {
 			ret := C.libevdev_enable_event_code(dev, type_, code, nil)
 			err := evdevError(ret)
 			if err != nil {
-				return nil, fmt.Errorf("failed to enable event code: %v", err)
+				return nil, fmt.Errorf("failed to enable event code: %w", err)
 			}
 		}
 	}
@@ -90,14 +90,14 @@ func Start(ctx context.Context, source <-chan inputevent.InputEvent) <-chan erro
 func start(ctx context.Context, source <-chan inputevent.InputEvent) error {
 	dev, err := createEvdevDevice()
 	if err != nil {
-		return fmt.Errorf("failed to create evdev device: %v", err)
+		return fmt.Errorf("failed to create evdev device: %w", err)
 	}
 	defer C.libevdev_free(dev)
 
 	var uinput *C.struct_libevdev_uinput
 	ret := C.libevdev_uinput_create_from_device(dev, C.LIBEVDEV_UINPUT_OPEN_MANAGED, &uinput)
 	if err := evdevError(ret); err != nil {
-		return fmt.Errorf("failed to create uinput device: %v", err)
+		return fmt.Errorf("failed to create uinput device: %w", err)
 	}
 	defer C.libevdev_uinput_destroy(uinput)
 
@@ -182,7 +182,7 @@ func writeInput(uinput *C.struct_libevdev_uinput, input inputevent.InputEvent) e
 
 	ret := C.write_events(uinput, C.size_t(len(events)), (*C.event_t)(unsafe.Pointer(&events[0])))
 	if err := evdevError(ret); err != nil {
-		return fmt.Errorf("failed to write event: %v", err)
+		return fmt.Errorf("failed to write event: %w", err)
 	}
 
 	d = time.Since(t)

@@ -173,20 +173,20 @@ func (b *keyBuffer) toggleKeyStrokeExists(after time.Time) (bool, time.Time) {
 func disableQuickEdit() error {
 	handle, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
 	if err != nil {
-		return fmt.Errorf("failed to get handle: %v", err)
+		return fmt.Errorf("failed to get handle: %w", err)
 	}
 	defer windows.CloseHandle(handle)
 
 	var mode uint32
 	err = windows.GetConsoleMode(handle, &mode)
 	if err != nil {
-		return fmt.Errorf("failed to get mode: %v", err)
+		return fmt.Errorf("failed to get mode: %w", err)
 	}
 
 	mode &= ^uint32(windows.ENABLE_QUICK_EDIT_MODE)
 	err = windows.SetConsoleMode(handle, mode)
 	if err != nil {
-		return fmt.Errorf("failed to set mode: %v", err)
+		return fmt.Errorf("failed to set mode: %w", err)
 	}
 
 	return nil

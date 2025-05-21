@@ -100,17 +100,17 @@ type Frame struct {
 func writeFrame(w io.Writer, frm Frame) error {
 	err := writeTag(w, frm.Tag)
 	if err != nil {
-		return fmt.Errorf("failed to write tag: %v", err)
+		return fmt.Errorf("failed to write tag: %w", err)
 	}
 
 	err = writeLength(w, frm.Length)
 	if err != nil {
-		return fmt.Errorf("failed to write length: %v", err)
+		return fmt.Errorf("failed to write length: %w", err)
 	}
 
 	_, err = w.Write(frm.Value[:frm.Length])
 	if err != nil {
-		return fmt.Errorf("failed to write value: %v", err)
+		return fmt.Errorf("failed to write value: %w", err)
 	}
 
 	return nil
@@ -119,18 +119,18 @@ func writeFrame(w io.Writer, frm Frame) error {
 func readFrame(r io.Reader) (Frame, error) {
 	tag, err := readTag(r)
 	if err != nil {
-		return Frame{}, fmt.Errorf("failed to read tag: %v", err)
+		return Frame{}, fmt.Errorf("failed to read tag: %w", err)
 	}
 
 	length, err := readLength(r)
 	if err != nil {
-		return Frame{}, fmt.Errorf("failed to read length: %v", err)
+		return Frame{}, fmt.Errorf("failed to read length: %w", err)
 	}
 
 	value := make([]byte, length)
 	_, err = io.ReadFull(r, value)
 	if err != nil {
-		return Frame{}, fmt.Errorf("failed to read value: %v", err)
+		return Frame{}, fmt.Errorf("failed to read value: %w", err)
 	}
 
 	if length > ValueMaxLength {
@@ -233,17 +233,17 @@ func (s *Session) WriteFrame(frm Frame) error {
 	t := time.Now().Add(WriteTimeout)
 	err := s.conn.SetWriteDeadline(t)
 	if err != nil {
-		return fmt.Errorf("failed to set write deadline: %v", err)
+		return fmt.Errorf("failed to set write deadline: %w", err)
 	}
 
 	err = writeFrame(s.w, frm)
 	if err != nil {
-		return fmt.Errorf("failed to write to buffer: %v", err)
+		return fmt.Errorf("failed to write to buffer: %w", err)
 	}
 
 	err = s.w.Flush()
 	if err != nil {
-		return fmt.Errorf("failed to flush buffer: %v", err)
+		return fmt.Errorf("failed to flush buffer: %w", err)
 	}
 
 	return nil

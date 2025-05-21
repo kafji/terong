@@ -39,17 +39,17 @@ type Config struct {
 func Start(ctx context.Context, cfg *Config) *Handle {
 	clientCert, err := os.ReadFile(cfg.TLSCertPath)
 	if err != nil {
-		err := fmt.Errorf("failed to read tls cert file: %v", err)
+		err := fmt.Errorf("failed to read tls cert file: %w", err)
 		panic(err)
 	}
 	clientKey, err := os.ReadFile(cfg.TLSKeyPath)
 	if err != nil {
-		err := fmt.Errorf("failed to read tls cert file: %v", err)
+		err := fmt.Errorf("failed to read tls cert file: %w", err)
 		panic(err)
 	}
 	serverCert, err := os.ReadFile(cfg.ServerTLSCertPath)
 	if err != nil {
-		err := fmt.Errorf("failed to read server tls cert file: %v", err)
+		err := fmt.Errorf("failed to read server tls cert file: %w", err)
 		panic(err)
 	}
 
@@ -118,7 +118,7 @@ func runSession(ctx context.Context, sess *session, inputs chan<- inputevent.Inp
 				case <-sess.SendPingDeadline():
 					slog.Debug("sending ping")
 					if err := sess.SendPing(); err != nil {
-						return fmt.Errorf("failed to write ping: %v", err)
+						return fmt.Errorf("failed to write ping: %w", err)
 					}
 
 				case <-sess.RecvPingDeadline():
