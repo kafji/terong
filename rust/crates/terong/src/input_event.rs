@@ -33,7 +33,7 @@ pub enum MouseButton {
 
 /// Keyboard key.
 #[repr(u16)]
-#[derive(FromRepr, EnumIter, Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(FromRepr, EnumIter, Deserialize, Serialize, Hash, Eq, PartialEq, Copy, Clone, Debug)]
 pub enum KeyCode {
     Escape = 0,
 

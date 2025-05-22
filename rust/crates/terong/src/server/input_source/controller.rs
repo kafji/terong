@@ -1,5 +1,6 @@
 use super::event::LocalInputEvent;
 use crate::{
+    EVENT_LOG_FILE_PATH,
     event_buffer::EventBuffer,
     event_logger::EventLogger,
     transport::protocol::{InputEvent, KeyCode},
@@ -30,7 +31,7 @@ impl InputController {
             d > Duration::from_millis(300)
         });
         let event_logger = {
-            let log_file = File::create("./events.log").await?;
+            let log_file = File::create(EVENT_LOG_FILE_PATH).await?;
             EventLogger::new(log_file)
         };
         let this = Self {
