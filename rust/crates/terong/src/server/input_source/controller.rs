@@ -8,7 +8,7 @@ use crate::{
 use anyhow::Error;
 use std::time::{Duration, Instant};
 use tokio::{fs::File, sync::mpsc};
-use tracing::debug;
+use tracing::{debug, error};
 
 pub struct InputController {
     /// Buffer for local input events.
@@ -49,7 +49,9 @@ impl InputController {
     pub async fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
         debug!(?event, "received local input event");
 
-        self.event_logger.log(event).await?;
+        if let Err(err) = self.event_logger.log(event).await {
+            error!(error = %err, "failed to log event");
+        }
 
         self.event_buf.push_event(event, Instant::now());
 

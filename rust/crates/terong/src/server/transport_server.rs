@@ -37,18 +37,12 @@ pub fn start(args: TransportServer, event_rx: mpsc::Receiver<InputEvent>) -> Joi
 }
 
 async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<InputEvent>) {
-    let tls_acceptor = create_tls_acceptor(
-        &args.tls_certs[0].0,
-        &args.tls_key.0,
-        &args.client_tls_certs[0].0,
-    );
+    let tls_acceptor = create_tls_acceptor(&args.tls_certs[0].0, &args.tls_key.0, &args.client_tls_certs[0].0);
 
     let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), args.port);
 
     info!("listening at {}", server_addr);
-    let listener = TcpListener::bind(server_addr)
-        .await
-        .expect("failed to bind server");
+    let listener = TcpListener::bind(server_addr).await.expect("failed to bind server");
 
     let mut session_handler: Option<SessionHandle> = None;
 
@@ -77,12 +71,15 @@ async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<Input
             }
 
             Ok((stream, peer_addr)) = listener.accept() => {
-                handle_incoming_connection(
+               match handle_incoming_connection(
                     &mut session_handler,
                     stream,
                     peer_addr,
                     &tls_acceptor,
-                ).await
+                ).await {
+                    Ok(_) => (),
+                    Err(err) => error!(error = %err, "failed to handle incoming connection"),
+                }
             },
         }
     }
@@ -95,17 +92,18 @@ async fn handle_incoming_connection(
     stream: TcpStream,
     peer_addr: SocketAddr,
     tls_acceptor: &tokio_rustls::TlsAcceptor,
-) {
+) -> Result<(), anyhow::Error> {
     info!(?peer_addr, "received incoming connection");
     if session_handler.is_none() {
-        let stream = tls_acceptor.accept(stream).await.unwrap();
+        let stream = tls_acceptor.accept(stream).await?;
         let transport = Transport::new(stream);
 
         let handler = spawn_session(peer_addr, transport);
         *session_handler = Some(handler);
     } else {
-        info!(?peer_addr, "dropping incoming connection")
+        info!(?peer_addr, "dropping incoming connection");
     }
+    Ok(())
 }
 
 /// Handler to a session.
@@ -176,11 +174,7 @@ fn spawn_session(peer_addr: SocketAddr, transport: ServerTransport) -> SessionHa
         info!(?peer_addr, "disconnected from client");
     });
 
-    SessionHandle {
-        event_tx,
-        task,
-        state,
-    }
+    SessionHandle { event_tx, task, state }
 }
 
 /// The session loop.
@@ -192,8 +186,7 @@ async fn run_session(session: Session) -> Result<(), Error> {
     } = session;
 
     let ping_ticker_interval = Duration::from_secs(20);
-    let mut ping_ticker =
-        { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
+    let mut ping_ticker = { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
     let mut local_ping_counter = 1;
 
     loop {
