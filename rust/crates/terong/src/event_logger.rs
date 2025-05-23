@@ -3,14 +3,10 @@
 use crate::{input_event::KeyCode, server::input_source::event::LocalInputEvent};
 use anyhow::anyhow;
 use async_stream::stream;
+use bytes::{BufMut, BytesMut};
 use futures::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{
-    collections::HashMap,
-    io::{IoSlice, SeekFrom},
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashMap, io::SeekFrom, sync::Arc, time::Instant};
 use strum::IntoEnumIterator;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
@@ -27,7 +23,13 @@ pub struct EventLog<E> {
 pub struct EventLogger<T, E> {
     store: Arc<Mutex<T>>,
     start: Option<Instant>,
-    log_tx: mpsc::Sender<EventLog<E>>,
+    op_tx: mpsc::Sender<WriteOp<E>>,
+}
+
+#[derive(Debug)]
+enum WriteOp<E> {
+    Write(EventLog<E>),
+    Flush,
 }
 
 impl<T, E> EventLogger<T, E>
@@ -37,24 +39,37 @@ where
 {
     pub fn new(store: T) -> Self {
         let store = Arc::new(Mutex::new(store));
-        let (log_tx, mut log_rx) = mpsc::channel(1);
 
-        // this task will run until the EventLogger is dropped via log_tx
+        let (op_tx, mut op_rx) = mpsc::channel(1);
+
+        // this actor will run until the EventLogger is dropped via op_rx
         spawn({
             let store = store.clone();
             async move {
-                loop {
-                    let log = if let Some(log) = log_rx.recv().await {
-                        log
-                    } else {
-                        break;
-                    };
-                    let log = serde_json::to_string(&log)?;
-                    let mut store = store.lock().await;
-                    store
-                        .write_vectored(&[IoSlice::new(log.as_bytes()), IoSlice::new(b"\n")])
-                        .await?;
-                    store.flush().await?;
+                let mut buf = BytesMut::new();
+                macro_rules! flush {
+                    () => {{
+                        let mut store = store.lock().await;
+                        let buf = buf.split();
+                        store.write_all(&buf).await?;
+                        store.flush().await?;
+                    }};
+                }
+                while let Some(op) = op_rx.recv().await {
+                    match op {
+                        WriteOp::Write(log) => {
+                            let mut w = buf.writer();
+                            serde_json::to_writer(&mut w, &log)?;
+                            buf = w.into_inner();
+                            buf.put_u8(b'\n');
+                            if buf.len() >= 4096 {
+                                flush!();
+                            }
+                        }
+                        WriteOp::Flush => {
+                            flush!();
+                        }
+                    }
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }
@@ -63,7 +78,7 @@ where
         Self {
             store,
             start: Default::default(),
-            log_tx,
+            op_tx,
         }
     }
 
@@ -84,11 +99,18 @@ where
             0
         };
         let log = EventLog { event, stamp };
-        self.log_tx
-            .send(log)
+        self.op_tx
+            .send(WriteOp::Write(log))
             .await
-            .map_err(|_| anyhow!("failed to send log message, channel closed"))?;
+            .map_err(|_| anyhow!("failed to send write op"))?;
         Ok(())
+    }
+
+    pub async fn flush(&mut self) -> Result<(), anyhow::Error> {
+        self.op_tx
+            .send(WriteOp::Flush)
+            .await
+            .map_err(|_| anyhow!("failed to send flush op"))
     }
 }
 
@@ -206,6 +228,7 @@ mod tests {
 
         {
             logger.log("hello".to_owned()).await.unwrap();
+            logger.flush().await.unwrap();
             // let the write actor run
             yield_now().await;
         }
@@ -220,6 +243,7 @@ mod tests {
 
         {
             logger.log("world".to_owned()).await.unwrap();
+            logger.flush().await.unwrap();
             // let the write actor run
             yield_now().await;
         }
@@ -260,6 +284,7 @@ mod tests {
             let mut logger = EventLogger::new(store);
             logger.log("").await.unwrap();
             logger.log("hello").await.unwrap();
+            logger.flush().await.unwrap();
             yield_now().await;
             let mut input = logger.store.lock().await;
             input.seek(SeekFrom::Start(0)).await.unwrap();
