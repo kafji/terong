@@ -7,6 +7,3 @@ edition = "2024"
 
 [workspace.dependencies]
 tokio = "~1.43"
-
-[profile.release]
-debug = "full"
