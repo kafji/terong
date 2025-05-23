@@ -4,7 +4,7 @@ tls_cert_path = "./client.cert.pem"
 tls_key_path = "./client.key.pem"
 # Address of the server the client will connect to.
 server_addr = "192.168.0.1:59001"
-tls_root_cert_path = "./root.cert.pem"
+tls_root_cert_path = "./ca.cert.pem"
 
 [server]
 # Where the server will listen for incoming connections.
@@ -12,7 +12,7 @@ port = 59001
 # Paths to server's TLS key pair.
 tls_cert_path = "./server.cert.pem"
 tls_key_path = "./server.key.pem"
-tls_root_cert_path = "./root.cert.pem"
+tls_root_cert_path = "./ca.cert.pem"
 
 [server.linux]
 # replace this fields with input device path listed in `evtest`

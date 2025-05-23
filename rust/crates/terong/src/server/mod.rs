@@ -8,7 +8,7 @@ use crate::{
     logging::init_tracing,
     server::{config::ServerConfig, transport_server::TransportServer},
 };
-use anyhow::Error;
+use anyhow::{Context, Error};
 use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
@@ -37,9 +37,15 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
     let input_source = input_source::start(event_tx);
 
     let server = {
-        let tls_certs = read_certs(&tls_cert_path).await?;
-        let tls_key = read_private_key(&tls_key_path).await?;
-        let root_certs = read_certs(&tls_root_cert_path).await?;
+        let tls_certs = read_certs(&tls_cert_path)
+            .await
+            .context("failed to read server tls cert")?;
+        let tls_key = read_private_key(&tls_key_path)
+            .await
+            .context("failed to read server tls key")?;
+        let root_certs = read_certs(&tls_root_cert_path)
+            .await
+            .context("failed to read tls root cert")?;
         let args = TransportServer {
             port,
             tls_certs,
