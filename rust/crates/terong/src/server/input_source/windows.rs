@@ -2,9 +2,7 @@ use super::{
     controller::InputController,
     event::{LocalInputEvent, MousePosition},
 };
-use crate::transport::protocol::{
-    InputEvent, KeyCode, MouseButton, MouseScrollDirection, windows::VirtualKey,
-};
+use crate::transport::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection, windows::VirtualKey};
 use futures::executor::block_on;
 use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
@@ -15,13 +13,12 @@ use windows::Win32::{
     Foundation::{GetLastError, LPARAM, LRESULT, RECT, WPARAM},
     System::LibraryLoader::GetModuleHandleW,
     UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT, PostMessageW, SPI_GETWORKAREA,
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursorPos, SetWindowsHookExW,
-        SystemParametersInfoW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WHEEL_DELTA,
-        WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-        WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
-        WM_XBUTTONDOWN, WM_XBUTTONUP, XBUTTON1, XBUTTON2,
+        CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG,
+        MSLLHOOKSTRUCT, PostMessageW, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursorPos,
+        SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WHEEL_DELTA,
+        WM_APP, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
+        WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+        XBUTTON1, XBUTTON2,
     },
 };
 
@@ -53,15 +50,8 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
 
     // set low level keyboard hook
     let _keyboard_hook = Unhooker(
-        unsafe {
-            SetWindowsHookExW(
-                WH_KEYBOARD_LL,
-                Some(keyboard_hook_proc),
-                Some(module.into()),
-                0,
-            )
-        }
-        .expect("failed to set keyboard hook"),
+        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), Some(module.into()), 0) }
+            .expect("failed to set keyboard hook"),
     );
 
     let mut msg = MSG::default();
@@ -119,8 +109,7 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         };
 
                         // propagate input event to the controller
-                        let should_consume_input =
-                            block_on(controller.on_input_event(event)).unwrap();
+                        let should_consume_input = block_on(controller.on_input_event(event)).unwrap();
 
                         if should_consume_input != get_consume_input() {
                             if !should_consume_input {
@@ -160,10 +149,11 @@ impl LocalEventMapper {
     fn map_key_repeat(&self, new_event: LocalInputEvent) -> LocalInputEvent {
         let prev_event = &self.prev_event;
         match (prev_event, new_event) {
-            (
-                Some(LocalInputEvent::KeyDown { key: prev_key }),
-                LocalInputEvent::KeyDown { key },
-            ) if key == *prev_key => LocalInputEvent::KeyRepeat { key },
+            (Some(LocalInputEvent::KeyDown { key: prev_key }), LocalInputEvent::KeyDown { key })
+                if key == *prev_key =>
+            {
+                LocalInputEvent::KeyRepeat { key }
+            }
             _ => new_event,
         }
     }
@@ -272,10 +262,10 @@ extern "system" fn mouse_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM) -
         }
         .into(),
 
-        WM_XBUTTONDOWN => get_mouse_button(hook_event.mouseData)
-            .map(|button| LocalInputEvent::MouseButtonDown { button }),
-        WM_XBUTTONUP => get_mouse_button(hook_event.mouseData)
-            .map(|button| LocalInputEvent::MouseButtonUp { button }),
+        WM_XBUTTONDOWN => {
+            get_mouse_button(hook_event.mouseData).map(|button| LocalInputEvent::MouseButtonDown { button })
+        }
+        WM_XBUTTONUP => get_mouse_button(hook_event.mouseData).map(|button| LocalInputEvent::MouseButtonUp { button }),
 
         WM_MOUSEWHEEL => {
             let delta = {
@@ -338,11 +328,13 @@ extern "system" fn keyboard_hook_proc(ncode: i32, wparam: WPARAM, lparam: LPARAM
 
     // map hook event to input event
     let event = match wparam.0 as u32 {
-        WM_KEYDOWN | WM_SYSKEYDOWN => KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _))
-            .map(|key| LocalInputEvent::KeyDown { key }),
+        WM_KEYDOWN | WM_SYSKEYDOWN => {
+            KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _)).map(|key| LocalInputEvent::KeyDown { key })
+        }
 
-        WM_KEYUP | WM_SYSKEYUP => KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _))
-            .map(|key| LocalInputEvent::KeyUp { key }),
+        WM_KEYUP | WM_SYSKEYUP => {
+            KeyCode::from_virtual_key(VirtualKey(hook_event.vkCode as _)).map(|key| LocalInputEvent::KeyUp { key })
+        }
 
         action => {
             warn!(?action, "unhandled keyboard event");
