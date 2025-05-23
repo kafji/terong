@@ -1,5 +1,6 @@
-/terong.toml*
-/terong-server*
-/terong-client*
+/*.log*
 /*.pem
 /rf*
+/terong-client*
+/terong-server*
+/terong.toml*
