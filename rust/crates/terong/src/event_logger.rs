@@ -86,7 +86,7 @@ where
         let stamp = if let Some(start) = self.start {
             let now = Instant::now();
             let d = now - start;
-            match d.as_nanos().try_into() {
+            match d.as_millis().try_into() {
                 Ok(s) => s,
                 Err(_) => {
                     // stamp can't fit in u64, rollover
@@ -124,7 +124,7 @@ where
             let mut store = self.store.lock().await;
             store.seek(SeekFrom::Start(0)).await?;
             {
-                let logs = stream(&mut *store).await?;
+                let logs = read_logs(&mut *store).await?;
                 pin!(logs);
                 while let Some(log) = logs.try_next().await? {
                     yield Ok(log);
@@ -136,7 +136,7 @@ where
     }
 }
 
-async fn stream<E>(
+pub async fn read_logs<E>(
     r: impl AsyncRead + Unpin,
 ) -> Result<impl Stream<Item = Result<EventLog<E>, anyhow::Error>>, anyhow::Error>
 where
@@ -198,7 +198,7 @@ where
     O: Obfuscator,
     O::Event: DeserializeOwned + Serialize,
 {
-    let logs = stream(input).await?;
+    let logs = read_logs(input).await?;
     pin!(logs);
     let mut buf = Vec::new();
     while let Some(log) = logs.try_next().await? {
@@ -218,8 +218,8 @@ where
 mod tests {
     use super::*;
     use futures::TryStreamExt;
-    use std::io::Cursor;
-    use tokio::task::yield_now;
+    use std::{io::Cursor, time::Duration};
+    use tokio::{task::yield_now, time::sleep};
 
     #[tokio::test]
     async fn test_rwrwr() {
@@ -245,6 +245,7 @@ mod tests {
         );
 
         {
+            sleep(Duration::from_millis(100)).await;
             logger.log("world".to_owned()).await.unwrap();
             logger.flush().await.unwrap();
             // let the write actor run
@@ -286,7 +287,9 @@ mod tests {
             let store = Cursor::new(Vec::<u8>::new());
             let mut logger = EventLogger::new(store);
             logger.log("hello").await.unwrap();
+            sleep(Duration::from_millis(100)).await;
             logger.log("").await.unwrap();
+            sleep(Duration::from_millis(100)).await;
             logger.log("world").await.unwrap();
             logger.flush().await.unwrap();
             yield_now().await;
