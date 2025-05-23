@@ -62,7 +62,9 @@ async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<Input
             event = event_rx.recv() => {
                 match (event, &mut session_handler) {
                     // propagate event to session
-                    (Some(event), Some(session)) if session.is_connected() => { session.send_event(event).await.ok(); },
+                    (Some(event), Some(session)) if session.is_connected() => {
+                        session.send_event(event).await.ok();
+                    },
                     // stop server if channel is closed
                     (None, _) => break,
                     // drop event if we didn't have active session
@@ -71,14 +73,18 @@ async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<Input
             }
 
             Ok((stream, peer_addr)) = listener.accept() => {
-               match handle_incoming_connection(
+                match handle_incoming_connection(
                     &mut session_handler,
                     stream,
                     peer_addr,
                     &tls_acceptor,
                 ).await {
                     Ok(_) => (),
-                    Err(err) => error!(error = %err, "failed to handle incoming connection"),
+                    Err(err) => error!(
+                        peer_address = %peer_addr,
+                        error = %err,
+                        "failed to handle incoming connection",
+                    ),
                 }
             },
         }
@@ -93,7 +99,7 @@ async fn handle_incoming_connection(
     peer_addr: SocketAddr,
     tls_acceptor: &tokio_rustls::TlsAcceptor,
 ) -> Result<(), anyhow::Error> {
-    info!(?peer_addr, "received incoming connection");
+    info!(peer_address = %peer_addr, "received incoming connection");
     if session_handler.is_none() {
         let stream = tls_acceptor.accept(stream).await?;
         let transport = Transport::new(stream);
@@ -101,7 +107,7 @@ async fn handle_incoming_connection(
         let handler = spawn_session(peer_addr, transport);
         *session_handler = Some(handler);
     } else {
-        info!(?peer_addr, "dropping incoming connection");
+        info!(peer_address = %peer_addr, "dropping incoming connection");
     }
     Ok(())
 }
