@@ -12,7 +12,10 @@ pub fn create_tls_acceptor(server_cert: &[u8], server_key: &[u8], root_cert: &[u
         rustls::ServerConfig::builder()
             .with_client_cert_verifier(WebPkiClientVerifier::builder(Arc::new(root_store)).build().unwrap())
             .with_single_cert(
-                vec![CertificateDer::from_pem_slice(server_cert).unwrap()],
+                vec![
+                    CertificateDer::from_pem_slice(server_cert).unwrap(),
+                    CertificateDer::from_pem_slice(root_cert).unwrap(),
+                ],
                 PrivateKeyDer::from_pem_slice(server_key).unwrap(),
             )
             .unwrap(),
@@ -29,7 +32,10 @@ pub fn create_tls_connector(client_cert: &[u8], client_key: &[u8], root_cert: &[
         rustls::ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_client_auth_cert(
-                vec![CertificateDer::from_pem_slice(client_cert).unwrap()],
+                vec![
+                    CertificateDer::from_pem_slice(client_cert).unwrap(),
+                    CertificateDer::from_pem_slice(root_cert).unwrap(),
+                ],
                 PrivateKeyDer::from_pem_slice(client_key).unwrap(),
             )
             .unwrap(),
