@@ -19,7 +19,7 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
         port,
         tls_cert_path,
         tls_key_path,
-        client_tls_cert_path,
+        tls_root_cert_path,
         ..
     } = cfg;
 
@@ -39,12 +39,12 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
     let server = {
         let tls_certs = read_certs(&tls_cert_path).await?;
         let tls_key = read_private_key(&tls_key_path).await?;
-        let client_tls_certs = read_certs(&client_tls_cert_path).await?;
+        let root_certs = read_certs(&tls_root_cert_path).await?;
         let args = TransportServer {
             port,
             tls_certs,
             tls_key,
-            client_tls_certs,
+            tls_root_certs: root_certs,
         };
         transport_server::start(args, event_rx)
     };

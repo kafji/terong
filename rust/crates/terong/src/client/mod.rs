@@ -5,7 +5,7 @@ pub mod config;
 
 use crate::{
     client::{config::ClientConfig, transport_client::TransportClient},
-    config::{read_certs, read_private_key, Config},
+    config::{Config, read_certs, read_private_key},
     logging::init_tracing,
 };
 use anyhow::Error;
@@ -19,7 +19,7 @@ async fn start_app(cfg: ClientConfig) -> Result<(), Error> {
         tls_cert_path,
         tls_key_path,
         server_addr,
-        server_tls_cert_path,
+        tls_root_cert_path,
     } = cfg;
 
     // channel for input events from the transport client to the input sink
@@ -29,16 +29,13 @@ async fn start_app(cfg: ClientConfig) -> Result<(), Error> {
     // events through the channel
     let transport_client = {
         let tls_certs = read_certs(&tls_cert_path).await?;
-
         let tls_key = read_private_key(&tls_key_path).await?;
-
-        let server_tls_certs = read_certs(&server_tls_cert_path).await?;
-
+        let root_certs = read_certs(&tls_root_cert_path).await?;
         let args = TransportClient {
             server_addr,
             tls_certs,
             tls_key,
-            server_tls_certs,
+            tls_root_certs: root_certs,
         };
         transport_client::start(args, event_tx)
     };

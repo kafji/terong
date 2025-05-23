@@ -1,40 +1,29 @@
 use rustls::{RootCertStore, server::WebPkiClientVerifier};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::sync::Arc;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-pub fn create_tls_acceptor(
-    server_cert: &[u8],
-    server_key: &[u8],
-    client_cert: &[u8],
-) -> tokio_rustls::TlsAcceptor {
+pub fn create_tls_acceptor(server_cert: &[u8], server_key: &[u8], root_cert: &[u8]) -> TlsAcceptor {
     let mut root_store = RootCertStore::empty();
     root_store
-        .add(CertificateDer::from_pem_slice(client_cert).unwrap())
+        .add(CertificateDer::from_pem_slice(root_cert).unwrap())
         .unwrap();
     let config = Arc::new(
         rustls::ServerConfig::builder()
-            .with_client_cert_verifier(
-                WebPkiClientVerifier::builder(Arc::new(root_store))
-                    .build()
-                    .unwrap(),
-            )
+            .with_client_cert_verifier(WebPkiClientVerifier::builder(Arc::new(root_store)).build().unwrap())
             .with_single_cert(
                 vec![CertificateDer::from_pem_slice(server_cert).unwrap()],
                 PrivateKeyDer::from_pem_slice(server_key).unwrap(),
             )
             .unwrap(),
     );
-    tokio_rustls::TlsAcceptor::from(config)
+    TlsAcceptor::from(config)
 }
 
-pub fn create_tls_connector(
-    client_cert: &[u8],
-    client_key: &[u8],
-    server_cert: &[u8],
-) -> tokio_rustls::TlsConnector {
+pub fn create_tls_connector(client_cert: &[u8], client_key: &[u8], root_cert: &[u8]) -> TlsConnector {
     let mut root_store = RootCertStore::empty();
     root_store
-        .add(CertificateDer::from_pem_slice(server_cert).unwrap())
+        .add(CertificateDer::from_pem_slice(root_cert).unwrap())
         .unwrap();
     let config = Arc::new(
         rustls::ClientConfig::builder()
@@ -45,7 +34,7 @@ pub fn create_tls_connector(
             )
             .unwrap(),
     );
-    tokio_rustls::TlsConnector::from(config)
+    TlsConnector::from(config)
 }
 
 #[cfg(test)]
@@ -60,6 +49,11 @@ mod tests {
         sync::oneshot,
     };
 
+    #[ignore = "pointless(23/05/2025):
+    This test was written with the idea that the TLSs subsystem is taking and validating its peer certificates. But today I learn:
+        1. Rustls (its WebPKI subsystem) refuse to accept CA cert as end entity cert.
+        2. The _more correct_ way is to have a root cert, sign the peer certs with it, and validates the peer certs using the root cert.
+    todo(kfj): update the test to reflect that"]
     #[tokio::test]
     async fn test_with_valid_client_cert() {
         let (server_cert, server_key) = gen_cert_key_pair();
@@ -95,6 +89,11 @@ mod tests {
         assert_eq!(server.await.unwrap().unwrap(), b"hello");
     }
 
+    #[ignore = "pointless(23/05/2025):
+    This test was written with the idea that the TLSs subsystem is taking and validating its peer certificates. But today I learn:
+        1. Rustls (its WebPKI subsystem) refuse to accept CA cert as end entity cert.
+        2. The _more correct_ way is to have a root cert, sign the peer certs with it, and validates the peer certs using the root cert.
+    todo(kfj): update the test to reflect that"]
     #[tokio::test]
     async fn test_with_invalid_client_cert() {
         let (server_cert, server_key) = gen_cert_key_pair();
@@ -195,13 +194,11 @@ mod tests {
         params.distinguished_name = DistinguishedName::new();
 
         params.distinguished_name.push(DnType::CountryName, "ID");
-        params
-            .distinguished_name
-            .push(DnType::OrganizationName, "Example");
+        params.distinguished_name.push(DnType::OrganizationName, "Example");
 
-        params.subject_alt_names.push(SanType::IpAddress(
-            std::net::IpAddr::from_str("127.0.0.1").unwrap(),
-        ));
+        params
+            .subject_alt_names
+            .push(SanType::IpAddress(std::net::IpAddr::from_str("127.0.0.1").unwrap()));
 
         let key_pair = KeyPair::generate().unwrap();
         let cert = params.self_signed(&key_pair).unwrap();

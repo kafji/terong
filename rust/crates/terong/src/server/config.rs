@@ -8,7 +8,7 @@ pub struct ServerConfig {
     pub tls_cert_path: PathBuf,
     pub tls_key_path: PathBuf,
 
-    pub client_tls_cert_path: PathBuf,
+    pub tls_root_cert_path: PathBuf,
 
     #[cfg(target_os = "linux")]
     pub linux: LinuxConfig,

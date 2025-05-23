@@ -29,7 +29,7 @@ pub struct TransportServer {
     pub port: u16,
     pub tls_certs: Vec<Certificate>,
     pub tls_key: PrivateKey,
-    pub client_tls_certs: Vec<Certificate>,
+    pub tls_root_certs: Vec<Certificate>,
 }
 
 pub fn start(args: TransportServer, event_rx: mpsc::Receiver<InputEvent>) -> JoinHandle<()> {
@@ -37,7 +37,7 @@ pub fn start(args: TransportServer, event_rx: mpsc::Receiver<InputEvent>) -> Joi
 }
 
 async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<InputEvent>) {
-    let tls_acceptor = create_tls_acceptor(&args.tls_certs[0].0, &args.tls_key.0, &args.client_tls_certs[0].0);
+    let tls_acceptor = create_tls_acceptor(&args.tls_certs[0].0, &args.tls_key.0, &args.tls_root_certs[0].0);
 
     let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), args.port);
 
