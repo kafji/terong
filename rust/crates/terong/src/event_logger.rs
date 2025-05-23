@@ -200,11 +200,14 @@ where
 {
     let logs = stream(input).await?;
     pin!(logs);
+    let mut buf = Vec::new();
     while let Some(log) = logs.try_next().await? {
         if let Some(event) = obfuscator.obfuscate(log.event) {
             let log = EventLog { event, ..log };
-            let log = serde_json::to_string(&log)?;
-            output.write_all(log.as_bytes()).await?;
+            serde_json::to_writer(&mut buf, &log)?;
+            buf.push(b'\n');
+            output.write_all(&buf).await?;
+            buf.clear();
         }
     }
     output.flush().await?;
@@ -282,8 +285,9 @@ mod tests {
         let obfuscated = {
             let store = Cursor::new(Vec::<u8>::new());
             let mut logger = EventLogger::new(store);
-            logger.log("").await.unwrap();
             logger.log("hello").await.unwrap();
+            logger.log("").await.unwrap();
+            logger.log("world").await.unwrap();
             logger.flush().await.unwrap();
             yield_now().await;
             let mut input = logger.store.lock().await;
@@ -301,8 +305,15 @@ mod tests {
             .try_collect::<Vec<EventLog<String>>>()
             .await
             .unwrap();
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0].event, "olleh");
-        assert!(logs[0].stamp > 0);
+        assert_eq!(logs.len(), 2);
+        assert_eq!(
+            logs[0],
+            EventLog {
+                event: "olleh".to_owned(),
+                stamp: 0
+            }
+        );
+        assert_eq!(logs[1].event, "dlrow");
+        assert!(logs[1].stamp > 0);
     }
 }
