@@ -13,6 +13,7 @@ use tokio::{
     pin, spawn,
     sync::{Mutex, mpsc},
 };
+use tracing::info;
 
 #[derive(Deserialize, Serialize, PartialEq, Clone, Debug)]
 pub struct EventLog<E> {
@@ -196,19 +197,30 @@ pub async fn obfuscate<O>(
 ) -> Result<(), anyhow::Error>
 where
     O: Obfuscator,
-    O::Event: DeserializeOwned + Serialize,
+    O::Event: DeserializeOwned + Serialize + Send + Sync + 'static,
 {
+    info!("obfuscating log events");
     let logs = read_logs(input).await?;
+    let logs = logs.try_ready_chunks(100_000);
     pin!(logs);
     let mut buf = Vec::new();
-    while let Some(log) = logs.try_next().await? {
-        if let Some(event) = obfuscator.obfuscate(log.event) {
-            let log = EventLog { event, ..log };
+    while let Some(logs) = logs.try_next().await? {
+        info!(chunk_length = logs.len(), "processing");
+        let logs = logs.into_iter().filter_map(|log| {
+            if let Some(event) = obfuscator.obfuscate(log.event) {
+                let log = EventLog { event, ..log };
+                Some(log)
+            } else {
+                None
+            }
+        });
+        for log in logs {
             serde_json::to_writer(&mut buf, &log)?;
             buf.push(b'\n');
-            output.write_all(&buf).await?;
-            buf.clear();
         }
+        info!(buffer_size = buf.len(), "flushing buffer");
+        output.write_all(&buf).await?;
+        buf.clear();
     }
     output.flush().await?;
     Ok(())

@@ -7,6 +7,8 @@ use tokio::fs::File;
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt().init();
+
     let mut path = PathBuf::from_str(EVENT_LOG_FILE_PATH).unwrap();
     let input = File::open(&path).await.unwrap();
 
