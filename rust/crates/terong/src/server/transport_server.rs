@@ -9,7 +9,7 @@ use anyhow::{Context, Error};
 use futures::{FutureExt, future};
 use std::{
     fmt::Debug,
-    net::{SocketAddr, SocketAddrV4},
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -20,6 +20,7 @@ use tokio::{
     task::{self, JoinError, JoinHandle},
     time::{Instant, interval_at},
 };
+use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
 
 type ServerTransport = Transport<ClientMessage, ServerMessage>;
@@ -39,28 +40,30 @@ pub fn start(args: TransportServer, event_rx: mpsc::Receiver<InputEvent>) -> Joi
 async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<InputEvent>) {
     let tls_acceptor = create_tls_acceptor(&args.tls_certs[0].0, &args.tls_key.0, &args.tls_root_certs[0].0);
 
-    let server_addr = SocketAddrV4::new([0, 0, 0, 0].into(), args.port);
+    let server_addr = format!("0.0.0.0:{}", args.port);
 
-    info!("listening at {}", server_addr);
-    let listener = TcpListener::bind(server_addr).await.expect("failed to bind server");
+    info!(server_address = server_addr, "listening");
 
-    let mut session_handler: Option<SessionHandle> = None;
+    let listener = TcpListener::bind(server_addr)
+        .await
+        .expect("failed to bind to server address");
 
+    let mut session_handle: Option<SessionHandle> = None;
     loop {
-        let finished = session_handler
+        let finished = session_handle
             .as_mut()
-            .map(|x| x.finished().boxed())
+            .map(|session| session.finished().boxed())
             .unwrap_or_else(|| future::pending().boxed());
 
-        select! { biased;
+        select! {
             // check if session is finished if it exists
             Ok(()) = finished => {
-                session_handler.take();
+                session_handle.take();
             }
 
             // propagate to session if it exists
             event = event_rx.recv() => {
-                match (event, &mut session_handler) {
+                match (event, &mut session_handle) {
                     // propagate event to session
                     (Some(event), Some(session)) if session.is_connected() => {
                         session.send_event(event).await.ok();
@@ -72,10 +75,10 @@ async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<Input
                 }
             }
 
-            Ok((stream, peer_addr)) = listener.accept() => {
+            Ok((connection, peer_addr)) = listener.accept() => {
                 match handle_incoming_connection(
-                    &mut session_handler,
-                    stream,
+                    &mut session_handle,
+                    connection,
                     peer_addr,
                     &tls_acceptor,
                 ).await {
@@ -94,18 +97,18 @@ async fn run_transport(args: TransportServer, mut event_rx: mpsc::Receiver<Input
 // Handle incoming connection, create a new session if it's not exist, otherwise
 // drop the connection.
 async fn handle_incoming_connection(
-    session_handler: &mut Option<SessionHandle>,
-    stream: TcpStream,
+    session_handle: &mut Option<SessionHandle>,
+    connection: TcpStream,
     peer_addr: SocketAddr,
-    tls_acceptor: &tokio_rustls::TlsAcceptor,
+    tls_acceptor: &TlsAcceptor,
 ) -> Result<(), anyhow::Error> {
     info!(peer_address = %peer_addr, "received incoming connection");
-    if session_handler.is_none() {
-        let stream = tls_acceptor.accept(stream).await?;
+    if session_handle.is_none() {
+        let stream = tls_acceptor.accept(connection).await?;
         let transport = Transport::new(stream);
 
         let handler = spawn_session(peer_addr, transport);
-        *session_handler = Some(handler);
+        *session_handle = Some(handler);
     } else {
         info!(peer_address = %peer_addr, "dropping incoming connection");
     }
@@ -174,10 +177,8 @@ fn spawn_session(peer_addr: SocketAddr, transport: ServerTransport) -> SessionHa
         if let Err(err) = run_session(session).await {
             error!(error = ?err);
         };
-
         info!("session terminated");
-
-        info!(?peer_addr, "disconnected from client");
+        info!(peer_address = %peer_addr, "disconnected from client");
     });
 
     SessionHandle { event_tx, task, state }
