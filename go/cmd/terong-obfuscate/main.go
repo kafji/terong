@@ -2,53 +2,92 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
-	"io"
-	"iter"
 	"os"
-	"sync"
+	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 func main() {
-	var path string
+	start := time.Now()
+
+	usage := fmt.Sprintf("usage: %s <input>", os.Args[0])
+
+	var inputPath string
 	if len(os.Args) > 1 {
-		path = os.Args[1]
+		inputPath = os.Args[1]
 	} else {
-		fmt.Fprintf(os.Stderr, "usage: %s ...\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "%s\n", usage)
 		return
 	}
 
-	f, err := os.Open(path)
+	inputFile, err := os.Open(inputPath)
 	if err != nil {
 		panic(err)
 	}
 
-	chunkChan := make(chan []eventLog[event], 1)
-
-	bufPool := new(sync.Pool)
-	bufPool.New = func() any {
-		return make([]eventLog[event], 0)
+	outputFile, err := os.Create("./terong-obfuscate.out.json")
+	if err != nil {
+		panic(err)
 	}
+
+	chunkChan := make(chan []eventLog[event], 10)
+
+	chunkSize := 100_000
 
 	go func() {
-		buf := *bufPool.Get().(*[]eventLog[event])
-		for log := range eventLogs[event](f) {
-			buf = append(buf, log)
-			if len(buf) >= 100_000 {
-				chunkChan <- buf
-				buf = *bufPool.Get().(*[]eventLog[event])
+		defer close(chunkChan)
+		r := bufio.NewScanner(inputFile)
+		chunk := make([]eventLog[event], 0, chunkSize)
+		for r.Scan() {
+			var log eventLog[event]
+			if err := sonic.Unmarshal(r.Bytes(), &log); err != nil {
+				panic(err)
+			}
+			chunk = append(chunk, log)
+			if len(chunk) >= chunkSize {
+				chunkChan <- chunk
+				chunk = make([]eventLog[event], 0, chunkSize)
 			}
 		}
-		chunkChan <- buf
-		buf = bufPool.Get().([]eventLog[event])
+		chunkChan <- chunk
 	}()
 
-	for logs := range chunkChan {
-		_ = logs
-		buf := logs[0:0:0]
-		bufPool.Put(&buf)
+	obfsctr := newObfuscator()
+
+	records := 0
+	w := bufio.NewWriter(outputFile)
+	for chunk := range chunkChan {
+		for _, log := range chunk {
+			ok, ev := obfsctr.Obfuscate(log.Event)
+			if !ok {
+				continue
+			}
+			log = eventLog[event]{
+				Event: ev,
+				Stamp: log.Stamp,
+			}
+			jsoned, err := sonic.Marshal(&log)
+			if err != nil {
+				panic(err)
+			}
+			_, err = w.Write(jsoned)
+			if err != nil {
+				panic(err)
+			}
+			_, err = w.Write([]byte("\n"))
+			if err != nil {
+				panic(err)
+			}
+			records++
+		}
 	}
+	if err := w.Flush(); err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("processed %d records in %v\n", records, time.Since(start))
 }
 
 type eventLog[T any] struct {
@@ -57,14 +96,14 @@ type eventLog[T any] struct {
 }
 
 type event struct {
-	MousePosition   mousePositionEvent `json:"MousePosition"`
-	MouseMove       mouseMoveEvent     `json:"MouseMove"`
-	MouseButtonDown mouseButtonEvent   `json:"MouseButtonDown"`
-	MouseButtonUp   mouseButtonEvent   `json:"MouseButtonUp"`
-	MouseScroll     mouseScrollEvent   `json:"MouseScroll"`
-	KeyUp           keyEvent           `json:"KeyUp"`
-	KeyRepeat       keyEvent           `json:"KeyRepeat"`
-	KeyDown         keyEvent           `json:"KeyDown"`
+	MousePosition   *mousePositionEvent `json:"MousePosition,omitempty"`
+	MouseMove       *mouseMoveEvent     `json:"MouseMove,omitempty"`
+	MouseButtonDown *mouseButtonEvent   `json:"MouseButtonDown,omitempty"`
+	MouseButtonUp   *mouseButtonEvent   `json:"MouseButtonUp,omitempty"`
+	MouseScroll     *mouseScrollEvent   `json:"MouseScroll,omitempty"`
+	KeyUp           *keyEvent           `json:"KeyUp,omitempty"`
+	KeyRepeat       *keyEvent           `json:"KeyRepeat,omitempty"`
+	KeyDown         *keyEvent           `json:"KeyDown,omitempty"`
 }
 
 type mousePositionEvent struct {
@@ -83,12 +122,12 @@ type mouseButtonEvent struct {
 
 type mouseScrollEvent struct {
 	Direction struct {
-		Up struct {
+		Up *struct {
 			Clicks uint8 `json:"clicks"`
-		} `json:"Up"`
-		Down struct {
+		} `json:"Up,omitempty"`
+		Down *struct {
 			Clicks uint8 `json:"clicks"`
-		} `json:"Down"`
+		} `json:"Down,omitempty"`
 	} `json:"direction"`
 }
 
@@ -96,18 +135,24 @@ type keyEvent struct {
 	Key string `json:"key"`
 }
 
-func eventLogs[T any](r io.Reader) iter.Seq[eventLog[T]] {
-	buf := bufio.NewScanner(r)
-	return iter.Seq[eventLog[T]](func(yield func(v eventLog[T]) bool) {
-		for buf.Scan() {
-			var v eventLog[T]
-			err := json.Unmarshal(buf.Bytes(), &v)
-			if err != nil {
-				panic(err)
-			}
-			if !yield(v) {
-				break
-			}
-		}
-	})
+type obfuscator struct {
+	table map[string]string
+}
+
+func newObfuscator() *obfuscator {
+	// todo(kfj)
+	return &obfuscator{}
+}
+
+func (*obfuscator) Obfuscate(e event) (bool, event) {
+	if e.KeyUp != nil {
+		e = event{KeyUp: e.KeyUp}
+	}
+	if e.KeyRepeat != nil {
+		e = event{KeyRepeat: e.KeyRepeat}
+	}
+	if e.KeyDown != nil {
+		e = event{KeyDown: e.KeyDown}
+	}
+	return true, e
 }

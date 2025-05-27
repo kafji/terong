@@ -193,24 +193,25 @@ pub async fn obfuscate<O>(
     input: impl AsyncRead + Unpin,
     output: impl AsyncWrite + Unpin,
     mut obfuscator: O,
-) -> Result<(), anyhow::Error>
+) -> Result<u64, anyhow::Error>
 where
     O: Obfuscator,
     O::Event: DeserializeOwned + Serialize + Clone + Send + Sync + 'static,
 {
-    let (chunk_tx, mut chunk_rx) = mpsc::channel(1);
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(10);
 
     let reader = async {
+        let chunk_size = 100_000;
         let mut r = BufReader::new(input);
         let mut line = String::new();
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(chunk_size);
         while r.read_line(&mut line).await? > 0 {
             let log: EventLog<O::Event> = serde_json::from_str(&line)?;
             line.clear();
             buf.push(log);
-            if buf.len() >= 200_000 {
-                chunk_tx.send(buf.clone()).await?;
-                buf.clear();
+            if buf.len() >= chunk_size {
+                chunk_tx.send(buf).await?;
+                buf = Vec::with_capacity(chunk_size);
             }
         }
         if !buf.is_empty() {
@@ -221,25 +222,27 @@ where
     };
 
     let writer = async {
+        let mut records = 0;
         let mut w = BufWriter::new(output);
         let mut buf = Vec::new();
         while let Some(logs) = chunk_rx.recv().await {
+            let logs = logs
+                .into_iter()
+                .filter_map(|log| obfuscator.obfuscate(log.event).map(|event| EventLog { event, ..log }));
             for log in logs {
-                if let Some(event) = obfuscator.obfuscate(log.event) {
-                    let log = EventLog { event, ..log };
-                    serde_json::to_writer(&mut buf, &log)?;
-                    buf.push(b'\n');
-                    w.write_all(&buf).await?;
-                    buf.clear();
-                }
+                serde_json::to_writer(&mut buf, &log)?;
+                buf.push(b'\n');
+                w.write_all(&buf).await?;
+                buf.clear();
+                records += 1;
             }
         }
         drop(chunk_rx);
         w.flush().await?;
-        Result::<_, anyhow::Error>::Ok(())
+        Result::<_, anyhow::Error>::Ok(records)
     };
 
-    tokio::try_join!(reader, writer).map(|_| ())
+    tokio::try_join!(reader, writer).map(|(_, records)| records)
 }
 
 #[cfg(test)]

@@ -1,4 +1,5 @@
 /*.log*
+/*.out*
 /*.pem
 /rf*
 /terong-client*

@@ -1,16 +1,12 @@
 use std::{path::PathBuf, str::FromStr, time::Instant};
 use terong::{EVENT_LOG_FILE_PATH, event_logger::LocalInputEventObfuscator};
-use tracing::info;
 
 #[tokio::main]
 async fn main() {
     use terong::event_logger::obfuscate;
     use tokio::{fs::File, try_join};
 
-    tracing_subscriber::fmt().init();
-
-    let t = Instant::now();
-    info!("obfuscating log events");
+    let start = Instant::now();
 
     let input_path = PathBuf::from_str(EVENT_LOG_FILE_PATH).unwrap();
     let input_file = File::open(&input_path);
@@ -25,10 +21,10 @@ async fn main() {
 
     let (input_file, output_file) = try_join!(input_file, output_file).unwrap();
 
-    obfuscate(input_file, output_file, LocalInputEventObfuscator::new())
+    let records = obfuscate(input_file, output_file, LocalInputEventObfuscator::new())
         .await
         .unwrap();
 
-    let d = Instant::now() - t;
-    info!(takes = ?d, "finished");
+    let d = Instant::now() - start;
+    println!("processed {} in {:?}", records, d);
 }
