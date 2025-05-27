@@ -6,13 +6,7 @@ use terong::{event_buffer::EventBuffer, event_logger::read_logs, server::input_s
 async fn events() -> Vec<(LocalInputEvent, u64)> {
     static EVENTS: &str = include_str!("../../../events.obfuscated.log");
     let events = read_logs(EVENTS.as_bytes());
-    events
-        .await
-        .unwrap()
-        .map_ok(|log| (log.event, log.stamp))
-        .try_collect()
-        .await
-        .unwrap()
+    events.map_ok(|log| (log.event, log.stamp)).try_collect().await.unwrap()
 }
 
 fn build_event_buf(events: &[(LocalInputEvent, u64)], event_buf: &mut EventBuffer<'_, u64>) {

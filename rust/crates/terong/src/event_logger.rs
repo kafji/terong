@@ -1,5 +1,7 @@
 //! Provides utilities to record and obfuscate event logs.
 
+pub mod sync;
+
 use crate::{input_event::KeyCode, server::input_source::event::LocalInputEvent};
 use anyhow::anyhow;
 use async_stream::stream;
@@ -9,11 +11,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, io::SeekFrom, sync::Arc, time::Instant};
 use strum::IntoEnumIterator;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
     pin, spawn,
     sync::{Mutex, mpsc},
 };
-use tracing::info;
 
 #[derive(Deserialize, Serialize, PartialEq, Clone, Debug)]
 pub struct EventLog<E> {
@@ -125,7 +126,7 @@ where
             let mut store = self.store.lock().await;
             store.seek(SeekFrom::Start(0)).await?;
             {
-                let logs = read_logs(&mut *store).await?;
+                let logs = read_logs(&mut *store);
                 pin!(logs);
                 while let Some(log) = logs.try_next().await? {
                     yield Ok(log);
@@ -137,20 +138,18 @@ where
     }
 }
 
-pub async fn read_logs<E>(
-    r: impl AsyncRead + Unpin,
-) -> Result<impl Stream<Item = Result<EventLog<E>, anyhow::Error>>, anyhow::Error>
+pub fn read_logs<E>(r: impl AsyncRead + Unpin) -> impl Stream<Item = Result<EventLog<E>, anyhow::Error>>
 where
     E: DeserializeOwned,
 {
-    let s = stream! {
-        let buf = BufReader::new(r);
-        let mut lines = buf.lines();
-        while let Some(line) = lines.next_line().await? {
+    stream! {
+        let mut buf = BufReader::new(r);
+        let mut line = String::new();
+        while buf.read_line(&mut line).await? > 0 {
             yield serde_json::from_str(&line).map_err(|err| anyhow!(err));
+            line.clear();
         }
-    };
-    Ok(s)
+    }
 }
 
 /// Obfuscator maps `E` to `Option<E>`.
@@ -192,38 +191,55 @@ impl Obfuscator for LocalInputEventObfuscator {
 
 pub async fn obfuscate<O>(
     input: impl AsyncRead + Unpin,
-    mut output: impl AsyncWrite + Unpin,
+    output: impl AsyncWrite + Unpin,
     mut obfuscator: O,
 ) -> Result<(), anyhow::Error>
 where
     O: Obfuscator,
-    O::Event: DeserializeOwned + Serialize + Send + Sync + 'static,
+    O::Event: DeserializeOwned + Serialize + Clone + Send + Sync + 'static,
 {
-    info!("obfuscating log events");
-    let logs = read_logs(input).await?;
-    let logs = logs.try_ready_chunks(100_000);
-    pin!(logs);
-    let mut buf = Vec::new();
-    while let Some(logs) = logs.try_next().await? {
-        info!(chunk_length = logs.len(), "processing");
-        let logs = logs.into_iter().filter_map(|log| {
-            if let Some(event) = obfuscator.obfuscate(log.event) {
-                let log = EventLog { event, ..log };
-                Some(log)
-            } else {
-                None
+    let (chunk_tx, mut chunk_rx) = mpsc::channel(1);
+
+    let reader = async {
+        let mut r = BufReader::new(input);
+        let mut line = String::new();
+        let mut buf = Vec::new();
+        while r.read_line(&mut line).await? > 0 {
+            let log: EventLog<O::Event> = serde_json::from_str(&line)?;
+            line.clear();
+            buf.push(log);
+            if buf.len() >= 200_000 {
+                chunk_tx.send(buf.clone()).await?;
+                buf.clear();
             }
-        });
-        for log in logs {
-            serde_json::to_writer(&mut buf, &log)?;
-            buf.push(b'\n');
         }
-        info!(buffer_size = buf.len(), "flushing buffer");
-        output.write_all(&buf).await?;
-        buf.clear();
-    }
-    output.flush().await?;
-    Ok(())
+        if !buf.is_empty() {
+            chunk_tx.send(buf).await?;
+        }
+        drop(chunk_tx);
+        Result::<_, anyhow::Error>::Ok(())
+    };
+
+    let writer = async {
+        let mut w = BufWriter::new(output);
+        let mut buf = Vec::new();
+        while let Some(logs) = chunk_rx.recv().await {
+            for log in logs {
+                if let Some(event) = obfuscator.obfuscate(log.event) {
+                    let log = EventLog { event, ..log };
+                    serde_json::to_writer(&mut buf, &log)?;
+                    buf.push(b'\n');
+                    w.write_all(&buf).await?;
+                    buf.clear();
+                }
+            }
+        }
+        drop(chunk_rx);
+        w.flush().await?;
+        Result::<_, anyhow::Error>::Ok(())
+    };
+
+    tokio::try_join!(reader, writer).map(|_| ())
 }
 
 #[cfg(test)]
