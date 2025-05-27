@@ -2,11 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/bytedance/sonic"
 )
 
 func main() {
@@ -42,7 +41,7 @@ func main() {
 		chunk := make([]eventLog[event], 0, chunkSize)
 		for r.Scan() {
 			var log eventLog[event]
-			if err := sonic.Unmarshal(r.Bytes(), &log); err != nil {
+			if err := json.Unmarshal(r.Bytes(), &log); err != nil {
 				panic(err)
 			}
 			chunk = append(chunk, log)
@@ -68,7 +67,7 @@ func main() {
 				Event: ev,
 				Stamp: log.Stamp,
 			}
-			jsoned, err := sonic.Marshal(&log)
+			jsoned, err := json.Marshal(&log)
 			if err != nil {
 				panic(err)
 			}
