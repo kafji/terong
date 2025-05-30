@@ -43,7 +43,7 @@ type Handle struct {
 }
 
 func Start() *Handle {
-	h := &Handle{inputs: make(chan inputevent.InputEvent, 10_000)}
+	h := &Handle{inputs: make(chan inputevent.InputEvent, 10)}
 	h.mu.Lock() // lock 'a
 	go func() {
 		runtime.LockOSThread()
@@ -256,7 +256,7 @@ func run(handle *Handle) error {
 				select {
 				case handle.inputs <- input:
 				default:
-					slog.Warn("dropping input, channel was blocked", "input", input)
+					panic("dropping input, channel was blocked")
 				}
 			}
 
