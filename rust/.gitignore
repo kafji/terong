@@ -1,5 +1,6 @@
 /*.log*
 /*.pem*
+/*perf*
 /target
 /terong_client*
 /terong_server*
