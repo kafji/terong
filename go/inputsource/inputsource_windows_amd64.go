@@ -1,7 +1,7 @@
 package inputsource
 
 /*
-#cgo CFLAGS: -Wall -g -O2
+#cgo CFLAGS: -Wall
 #include "hook_windows_amd64.h"
 
 #cgo noescape get_hook_event

@@ -2,7 +2,7 @@ package inputsink
 
 /*
 #cgo pkg-config: libevdev
-#cgo CFLAGS: -Wall -g -O2
+#cgo CFLAGS: -Wall
 #include "proxy_linux_amd64.h"
 #include <stdlib.h>
 #include <string.h>
