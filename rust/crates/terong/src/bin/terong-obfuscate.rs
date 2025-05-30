@@ -1,29 +1,24 @@
+use std::fs::File;
 use std::{path::PathBuf, str::FromStr, time::Instant};
-use terong::{EVENT_LOG_FILE_PATH, event_logger::LocalInputEventObfuscator};
+use terong::{
+    EVENT_LOG_FILE_PATH,
+    event_logger::obfuscate::{LocalInputEventObfuscator, obfuscate},
+};
 
-#[tokio::main]
-async fn main() {
-    use terong::event_logger::obfuscate;
-    use tokio::{fs::File, try_join};
-
+fn main() {
     let start = Instant::now();
 
-    let input_path = PathBuf::from_str(EVENT_LOG_FILE_PATH).unwrap();
-    let input_file = File::open(&input_path);
+    let mut path = PathBuf::from_str(EVENT_LOG_FILE_PATH).unwrap();
+    let input = File::open(&path).unwrap();
 
-    let mut output_path = input_path.clone();
-    output_path.set_file_name(format!(
+    path.set_file_name(format!(
         "{}.obfuscated.{}",
-        input_path.file_stem().expect("missing file stem").to_string_lossy(),
-        input_path.extension().expect("missing extension").to_string_lossy()
+        path.file_stem().expect("missing file stem").to_string_lossy(),
+        path.extension().expect("missing extension").to_string_lossy()
     ));
-    let output_file = File::create(&output_path);
+    let output = File::create(&path).unwrap();
 
-    let (input_file, output_file) = try_join!(input_file, output_file).unwrap();
-
-    let records = obfuscate(input_file, output_file, LocalInputEventObfuscator::new())
-        .await
-        .unwrap();
+    let records = obfuscate(input, output, LocalInputEventObfuscator::new()).unwrap();
 
     let d = Instant::now() - start;
     println!("processed {} in {:?}", records, d);
