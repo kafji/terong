@@ -14,7 +14,8 @@ LONGLONG get_mouse_hook_proc_worst() { return mouse_hook_proc_worst; }
 
 LONGLONG get_keyboard_hook_proc_worst() { return keyboard_hook_proc_worst; }
 
-LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) {
+LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
+{
   LARGE_INTEGER t;
   QueryPerformanceCounter(&t);
   LONGLONG t0 = t.QuadPart;
@@ -23,7 +24,8 @@ LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) {
 
   hook_event.code = wParam;
 
-  switch (hook_event.code) {
+  switch (hook_event.code)
+  {
   case WM_MOUSEMOVE:
     hook_event.data.mouse_move.x = details->pt.x;
     hook_event.data.mouse_move.y = details->pt.y;
@@ -43,17 +45,20 @@ LRESULT mouse_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) {
 
   QueryPerformanceCounter(&t);
   LONGLONG d = t.QuadPart / 1000 - t0 / 1000;
-  if (d > mouse_hook_proc_worst) {
+  if (d > mouse_hook_proc_worst)
+  {
     mouse_hook_proc_worst = d;
   }
 
-  if (eat_input) {
+  if (eat_input)
+  {
     return 1;
   }
   return CallNextHookEx(NULL, nCode, wParam, lParam);
 }
 
-LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) {
+LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam)
+{
   LARGE_INTEGER t;
   QueryPerformanceCounter(&t);
   LONGLONG t0 = t.QuadPart;
@@ -62,7 +67,8 @@ LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) {
 
   hook_event.code = wParam;
 
-  switch (hook_event.code) {
+  switch (hook_event.code)
+  {
   case WM_KEYDOWN:
   case WM_KEYUP:
   case WM_SYSKEYDOWN:
@@ -75,11 +81,13 @@ LRESULT keyboard_hook_proc(int nCode, WPARAM wParam, LPARAM lParam) {
 
   QueryPerformanceCounter(&t);
   LONGLONG d = t.QuadPart / 1000 - t0 / 1000;
-  if (d > keyboard_hook_proc_worst) {
+  if (d > keyboard_hook_proc_worst)
+  {
     keyboard_hook_proc_worst = d;
   }
 
-  if (eat_input) {
+  if (eat_input)
+  {
     return 1;
   }
   return CallNextHookEx(NULL, nCode, wParam, lParam);
