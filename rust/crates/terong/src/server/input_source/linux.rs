@@ -76,7 +76,7 @@ where
             if let Some(event) = event {
                 let consume_input = {
                     let mut controller = controller.lock().await;
-                    controller.on_input_event(event).await?
+                    controller.on_input_event(event)?
                 };
                 set_consume_input(device, consume_input)?;
             }
@@ -96,7 +96,7 @@ fn run(
     event_tx: mpsc::Sender<InputEvent>,
 ) -> Result<JoinHandle<()>, Error> {
     let handle = task::spawn(async move {
-        let controller = InputController::new(event_tx).await.unwrap();
+        let controller = InputController::new(event_tx).unwrap();
         let controller = Arc::new(Mutex::new(controller));
 
         let keyboard = keyboard_device
