@@ -100,17 +100,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::event_logger::{EventLogger, read_logs};
     use std::{
-        io::{Cursor, SeekFrom},
+        io::{Cursor, Seek, SeekFrom},
         time::Duration,
     };
-
-    use futures::TryStreamExt;
-    use tokio::{io::AsyncSeekExt, task::yield_now, time::sleep};
-
-    use crate::event_logger::EventLogger;
-
-    use super::*;
 
     struct StringObfuscator;
 
@@ -129,33 +124,29 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_obfuscate() {
+    #[test]
+    fn test_obfuscate() {
         let obfuscated = {
-            let store = Cursor::new(Vec::<u8>::new());
-            let mut logger = EventLogger::new(store);
-            logger.log("hello").await.unwrap();
-            sleep(Duration::from_millis(100)).await;
-            logger.log("").await.unwrap();
-            sleep(Duration::from_millis(100)).await;
-            logger.log("world").await.unwrap();
-            logger.flush().await.unwrap();
-            yield_now().await;
-            let mut input = logger.store.lock().await;
-            input.seek(SeekFrom::Start(0)).await.unwrap();
+            let mut buffer = Cursor::new(Vec::<u8>::new());
+            {
+                let mut logger = EventLogger::new(&mut buffer);
+                logger.log("hello").unwrap();
+                thread::sleep(Duration::from_millis(100));
+                logger.log("").unwrap();
+                thread::sleep(Duration::from_millis(100));
+                logger.log("world").unwrap();
+                thread::sleep(Duration::from_millis(100));
+            }
+            buffer.seek(SeekFrom::Start(0)).unwrap();
             let mut output = Vec::new();
-            obfuscate(&mut *input, &mut output, StringObfuscator).unwrap();
+            obfuscate(&mut buffer, &mut output, StringObfuscator).unwrap();
             output
         };
 
-        let mut logger = EventLogger::new(Cursor::new(obfuscated));
-        let logs = logger
-            .stream()
-            .await
-            .unwrap()
-            .try_collect::<Vec<EventLog<String>>>()
-            .await
-            .unwrap();
+        let logs = {
+            let mut buffer = Cursor::new(obfuscated);
+            read_logs(&mut buffer).collect::<Result<Vec<_>, _>>().unwrap()
+        };
         assert_eq!(logs.len(), 2);
         assert_eq!(
             logs[0],

@@ -3,15 +3,12 @@
 pub mod obfuscate;
 
 use anyhow::anyhow;
-use async_stream::stream;
-use bytes::{BufMut, BytesMut};
-use futures::{Stream, TryStreamExt};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{io::SeekFrom, sync::Arc, time::Instant};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader},
-    pin, spawn,
-    sync::{Mutex, mpsc},
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    marker::PhantomData,
+    slice,
+    time::Instant,
 };
 
 #[derive(Deserialize, Serialize, PartialEq, Clone, Debug)]
@@ -20,69 +17,27 @@ pub struct EventLog<E> {
     pub stamp: u64,
 }
 
-pub struct EventLogger<T, E> {
-    store: Arc<Mutex<T>>,
-    start: Option<Instant>,
-    op_tx: mpsc::Sender<WriteOp<E>>,
-}
-
 #[derive(Debug)]
-enum WriteOp<E> {
-    Write(EventLog<E>),
-    Flush,
+pub struct EventLogger<W, E> {
+    writer: W,
+    start: Option<Instant>,
+    _event: PhantomData<E>,
 }
 
-impl<T, E> EventLogger<T, E>
+impl<W, E> EventLogger<W, E>
 where
-    T: AsyncWrite + AsyncSeek + Unpin + Send + 'static,
-    E: Serialize + Send + 'static,
+    W: Write,
+    E: Serialize + Send + Sync + 'static,
 {
-    pub fn new(store: T) -> Self {
-        let store = Arc::new(Mutex::new(store));
-
-        let (op_tx, mut op_rx) = mpsc::channel(1);
-
-        // this actor will run until the EventLogger is dropped via op_rx
-        spawn({
-            let store = store.clone();
-            async move {
-                let mut buf = BytesMut::new();
-                macro_rules! flush {
-                    () => {{
-                        let mut store = store.lock().await;
-                        let buf = buf.split();
-                        store.write_all(&buf).await?;
-                        store.flush().await?;
-                    }};
-                }
-                while let Some(op) = op_rx.recv().await {
-                    match op {
-                        WriteOp::Write(log) => {
-                            let mut w = buf.writer();
-                            serde_json::to_writer(&mut w, &log)?;
-                            buf = w.into_inner();
-                            buf.put_u8(b'\n');
-                            if buf.len() >= 4096 {
-                                flush!();
-                            }
-                        }
-                        WriteOp::Flush => {
-                            flush!();
-                        }
-                    }
-                }
-                Result::<_, anyhow::Error>::Ok(())
-            }
-        });
-
+    pub fn new(writer: W) -> Self {
         Self {
-            store,
+            writer,
             start: Default::default(),
-            op_tx,
+            _event: Default::default(),
         }
     }
 
-    pub async fn log(&mut self, event: E) -> Result<(), anyhow::Error> {
+    pub fn log(&mut self, event: E) -> Result<(), anyhow::Error> {
         let stamp = if let Some(start) = self.start {
             let now = Instant::now();
             let d = now - start;
@@ -99,79 +54,84 @@ where
             0
         };
         let log = EventLog { event, stamp };
-        self.op_tx
-            .send(WriteOp::Write(log))
-            .await
-            .map_err(|_| anyhow!("failed to send write op"))?;
+        serde_json::to_writer(&mut self.writer, &log)?;
+        self.writer.write_all(slice::from_ref(&b'\n'))?;
         Ok(())
     }
-
-    pub async fn flush(&mut self) -> Result<(), anyhow::Error> {
-        self.op_tx
-            .send(WriteOp::Flush)
-            .await
-            .map_err(|_| anyhow!("failed to send flush op"))
-    }
 }
 
-impl<T, E> EventLogger<T, E>
+#[derive(Debug)]
+struct Records<R, E> {
+    source: BufReader<R>,
+    line: String,
+    _event: PhantomData<E>,
+}
+
+impl<R, E> Iterator for Records<R, E>
 where
-    T: AsyncRead + AsyncSeek + Unpin,
+    R: Read,
     E: DeserializeOwned,
 {
-    pub async fn stream(&mut self) -> Result<impl Stream<Item = Result<EventLog<E>, anyhow::Error>>, anyhow::Error> {
-        let s = stream! {
-            let mut store = self.store.lock().await;
-            store.seek(SeekFrom::Start(0)).await?;
-            {
-                let logs = read_logs(&mut *store);
-                pin!(logs);
-                while let Some(log) = logs.try_next().await? {
-                    yield Ok(log);
+    type Item = Result<EventLog<E>, anyhow::Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.line.clear();
+        match self.source.read_line(&mut self.line) {
+            Ok(n) => {
+                if n == 0 {
+                    return None;
                 }
             }
-            store.seek(SeekFrom::End(0)).await?;
-        };
-        Ok(s)
+            Err(err) => return Some(Err(anyhow!(err))),
+        }
+        match serde_json::from_str(&self.line) {
+            Ok(r) => return Some(Ok(r)),
+            Err(err) => return Some(Err(anyhow!(err))),
+        }
     }
 }
 
-pub fn read_logs<E>(r: impl AsyncRead + Unpin) -> impl Stream<Item = Result<EventLog<E>, anyhow::Error>>
+pub fn read_logs<E>(r: impl Read) -> impl Iterator<Item = Result<EventLog<E>, anyhow::Error>>
 where
     E: DeserializeOwned,
 {
-    stream! {
-        let mut buf = BufReader::new(r);
-        let mut line = String::new();
-        while buf.read_line(&mut line).await? > 0 {
-            yield serde_json::from_str(&line).map_err(|err| anyhow!(err));
-            line.clear();
-        }
+    let r = BufReader::new(r);
+    Records {
+        source: r,
+        line: String::new(),
+        _event: Default::default(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::TryStreamExt;
-    use std::{io::Cursor, time::Duration};
-    use tokio::{task::yield_now, time::sleep};
+    use std::{
+        io::{Cursor, Seek, SeekFrom},
+        thread,
+        time::Duration,
+    };
 
-    #[tokio::test]
-    async fn test_rwrwr() {
-        let store = Cursor::new(Vec::<u8>::new());
-        let mut logger = EventLogger::new(store);
-
-        let logs = logger.stream().await.unwrap().try_collect::<Vec<_>>().await.unwrap();
+    #[test]
+    fn test_rwrwr() {
+        let buffer = Cursor::new(Vec::<u8>::new());
+        let mut logger = EventLogger::<_, String>::new(buffer);
+        let logs = {
+            logger.writer.seek(SeekFrom::Start(0)).unwrap();
+            read_logs::<String>(&mut logger.writer)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
         assert!(logs.is_empty());
 
-        {
-            logger.log("hello".to_owned()).await.unwrap();
-            logger.flush().await.unwrap();
-            // let the write actor run
-            yield_now().await;
-        }
-        let logs = logger.stream().await.unwrap().try_collect::<Vec<_>>().await.unwrap();
+        logger.writer.seek(SeekFrom::End(0)).unwrap();
+        logger.log("hello".to_owned()).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        let logs = {
+            logger.writer.seek(SeekFrom::Start(0)).unwrap();
+            read_logs(&mut logger.writer).collect::<Result<Vec<_>, _>>().unwrap()
+        };
         assert_eq!(
             logs,
             &[EventLog {
@@ -180,14 +140,14 @@ mod tests {
             }]
         );
 
-        {
-            sleep(Duration::from_millis(100)).await;
-            logger.log("world".to_owned()).await.unwrap();
-            logger.flush().await.unwrap();
-            // let the write actor run
-            yield_now().await;
-        }
-        let logs = logger.stream().await.unwrap().try_collect::<Vec<_>>().await.unwrap();
+        logger.writer.seek(SeekFrom::End(0)).unwrap();
+        logger.log("world".to_owned()).unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        let logs = {
+            logger.writer.seek(SeekFrom::Start(0)).unwrap();
+            read_logs(&mut logger.writer).collect::<Result<Vec<_>, _>>().unwrap()
+        };
         assert_eq!(logs.len(), 2);
         assert_eq!(
             logs[0],
@@ -197,6 +157,6 @@ mod tests {
             }
         );
         assert_eq!(logs[1].event, "world");
-        assert!(logs[1].stamp > logs[0].stamp);
+        assert!(logs[1].stamp >= 100, "stamp was {}", logs[1].stamp);
     }
 }

@@ -6,9 +6,13 @@ use crate::{
     transport::protocol::{InputEvent, KeyCode},
 };
 use anyhow::Error;
-use std::time::{Duration, Instant};
-use tokio::{fs::File, sync::mpsc};
-use tracing::debug;
+use std::{
+    fs::File,
+    thread,
+    time::{Duration, Instant},
+};
+use tokio::sync::mpsc;
+use tracing::{Level, debug, error, span, warn};
 
 pub struct InputController {
     /// Buffer for local input events.
@@ -20,36 +24,55 @@ pub struct InputController {
     relay: bool,
     /// Last time we detect inputs for toggling the relay flag.
     relay_toggled_at: Option<Instant>,
-    event_logger: EventLogger<File, LocalInputEvent>,
+    logger_tx: std::sync::mpsc::Sender<LocalInputEvent>,
 }
 
 impl InputController {
-    pub async fn new(event_tx: mpsc::Sender<InputEvent>) -> Result<Self, anyhow::Error> {
+    pub fn new(event_tx: mpsc::Sender<InputEvent>) -> Result<Self, anyhow::Error> {
         let event_buf = EventBuffer::new(|new, old| {
             // Evict events older than 300 milliseconds from the newest event.
             let d = *new - *old;
             d > Duration::from_millis(300)
         });
-        let event_logger = {
-            let log_file = File::create(EVENT_LOG_FILE_PATH).await?;
-            EventLogger::new(log_file)
-        };
+
+        let (logger_tx, logger_rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let span = span!(Level::INFO, "event logger");
+            let _enter = span.enter();
+            let file = match File::create(EVENT_LOG_FILE_PATH) {
+                Ok(file) => file,
+                Err(err) => {
+                    error!(error = %err, "failed to create log file");
+                    return;
+                }
+            };
+            let mut logger = EventLogger::new(file);
+            while let Ok(event) = logger_rx.recv() {
+                if let Err(err) = logger.log(event) {
+                    warn!(error = %err, "failed to log event");
+                }
+            }
+            debug!("channel closed");
+        });
+
         let this = Self {
             event_buf,
             event_tx,
             relay: false,
             relay_toggled_at: None,
-            event_logger,
+            logger_tx,
         };
         Ok(this)
     }
 
     /// Returns boolean that denote if the next successive inputs should be
     /// captured or not.
-    pub async fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
+    pub fn on_input_event(&mut self, event: LocalInputEvent) -> Result<bool, Error> {
         debug!(?event, "received local input event");
 
-        self.event_logger.log(event).await?;
+        if let Err(err) = self.logger_tx.send(event) {
+            warn!(error = %err, "failed to log event, channel closed");
+        }
 
         self.event_buf.push_event(event, Instant::now());
 

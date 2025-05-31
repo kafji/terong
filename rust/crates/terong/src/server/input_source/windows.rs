@@ -3,15 +3,12 @@ use super::{
     event::{LocalInputEvent, MousePosition},
 };
 use crate::transport::protocol::{InputEvent, KeyCode, MouseButton, MouseScrollDirection, windows::VirtualKey};
-use futures::executor::block_on;
 use std::{cell::Cell, cmp, ffi::c_void, time::Duration};
 use tokio::{sync::mpsc, task};
 use tracing::{debug, error, warn};
-use windows::Win32::Foundation::POINT;
-use windows::Win32::System::Performance::QueryPerformanceCounter;
 use windows::Win32::{
-    Foundation::{GetLastError, LPARAM, LRESULT, RECT, WPARAM},
-    System::LibraryLoader::GetModuleHandleW,
+    Foundation::{GetLastError, LPARAM, LRESULT, POINT, RECT, WPARAM},
+    System::{LibraryLoader::GetModuleHandleW, Performance::QueryPerformanceCounter},
     UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetCursorPos, GetMessageW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG,
         MSLLHOOKSTRUCT, PostMessageW, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetCursorPos,
@@ -36,7 +33,7 @@ enum MessageCode {
 }
 
 fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
-    let mut controller = block_on(InputController::new(event_tx)).unwrap();
+    let mut controller = InputController::new(event_tx).unwrap();
 
     // get module handle for this application
     let module = unsafe { GetModuleHandleW(None) }.expect("failed to get current module handle");
@@ -109,7 +106,7 @@ fn run_input_source(event_tx: mpsc::Sender<InputEvent>) {
                         };
 
                         // propagate input event to the controller
-                        let should_consume_input = block_on(controller.on_input_event(event)).unwrap();
+                        let should_consume_input = controller.on_input_event(event).unwrap();
 
                         if should_consume_input != get_consume_input() {
                             if !should_consume_input {
