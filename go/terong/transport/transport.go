@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"time"
@@ -205,7 +205,7 @@ func (s *Session) InboxErr() error {
 func (s *Session) SetSendPingDeadline() {
 	ch := make(chan struct{}, 1)
 	go func() {
-		d := PingTimeout/2 + time.Duration(rand.Intn(int(PingTimeout/time.Second/2)))
+		d := PingTimeout/2 + time.Duration(rand.IntN(int(PingTimeout/time.Second/2)))
 		time.Sleep(d)
 		ch <- struct{}{}
 	}()
