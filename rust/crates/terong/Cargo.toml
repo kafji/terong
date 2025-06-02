@@ -24,7 +24,7 @@ rustls = "0.23"
 rustls-pki-types = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-strum = { version = "0.26", features = ["derive"] }
+strum = { version = "0.27", features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-rustls = "0.26"
 toml = "0.8"
