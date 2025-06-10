@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Error as Anyhow};
-use rand::{distributions::Uniform, thread_rng, Rng};
-use rf::{hubyte::HuByte, Key, Tree, TreeBuilder};
+use anyhow::{Error as Anyhow, anyhow};
+use rand::{Rng, distr::Uniform, rng};
+use rf::{Key, Tree, TreeBuilder, hubyte::HuByte};
 use std::{collections::HashSet, fs::read_dir, path::PathBuf, process::ExitCode};
 
 fn main() -> ExitCode {
@@ -10,25 +10,20 @@ fn main() -> ExitCode {
 
     match (args.next(), args.next(), args.next()) {
         (None, ..) => {
-            eprintln!(
-                "Select random file.\nUsage: {} <path> [min-size=0k [count=1]]",
-                name
-            );
+            eprintln!("Select random file.\nUsage: {} <path> [min-size=0k [count=1]]", name);
             ExitCode::FAILURE
         }
         (Some(path), min_size, count) => {
             match min_size
                 .map(|x| {
-                    x.parse()
-                        .map_err(|_| anyhow!("unexpected min-size: expecting <number><unit> where unit is one of k, m, or g"))
+                    x.parse().map_err(|_| {
+                        anyhow!("unexpected min-size: expecting <number><unit> where unit is one of k, m, or g")
+                    })
                 })
                 .transpose()
                 .and_then(|min_size| {
                     count
-                        .map(|x| {
-                            x.parse()
-                                .map_err(|err| anyhow!("unexpected count: {}", err))
-                        })
+                        .map(|x| x.parse().map_err(|err| anyhow!("unexpected count: {}", err)))
                         .transpose()
                         .and_then(|x| match x {
                             Some(x) if x < 1 => Err(anyhow!("expecting count > 0")),
@@ -76,8 +71,8 @@ fn select_file(path: String, min_size: Option<HuByte>, count: usize) -> Result<(
         HashSet::from_iter(0..files_count)
     } else {
         let mut ns = HashSet::new();
-        let dist = Uniform::new(0, files_count);
-        let mut rng = thread_rng();
+        let dist = Uniform::new(0, files_count).unwrap();
+        let mut rng = rng();
         while ns.len() < count {
             let n = rng.sample(dist);
             ns.insert(n);
