@@ -151,7 +151,7 @@ impl<IN, OUT> Transport<IN, OUT>
 where
     IN: Message + Debug,
 {
-    fn as_msg_reader(&mut self) -> MessageReader<BytesMut> {
+    fn as_msg_reader(&mut self) -> MessageReader<'_, BytesMut> {
         MessageReader::new(&mut self.stream, &mut self.read_buf)
     }
 
