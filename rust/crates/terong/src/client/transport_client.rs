@@ -35,12 +35,23 @@ pub fn start(args: TransportClient, event_tx: mpsc::Sender<InputEvent>) -> JoinH
 }
 
 async fn run_transport(args: TransportClient, event_tx: mpsc::Sender<InputEvent>) {
-    let tls_connector = create_tls_connector(&args.tls_certs[0].0, &args.tls_key.0, &args.tls_root_certs[0].0);
+    let tls_connector = create_tls_connector(
+        &args.tls_certs[0].0,
+        &args.tls_key.0,
+        &args.tls_root_certs[0].0,
+    );
 
     let mut retry_count = 0;
 
     loop {
-        if let Err(err) = connect(&args.server_addr, &event_tx, &mut retry_count, &tls_connector).await {
+        if let Err(err) = connect(
+            &args.server_addr,
+            &event_tx,
+            &mut retry_count,
+            &tls_connector,
+        )
+        .await
+        {
             error!(error = ?err);
 
             if retry_count >= 5 {
@@ -111,7 +122,10 @@ async fn connect(
     debug!("retry count reset to zero");
 
     let stream = tls_connector
-        .connect(rustls_pki_types::ServerName::IpAddress(server_addr.ip().into()), stream)
+        .connect(
+            rustls_pki_types::ServerName::IpAddress(server_addr.ip().into()),
+            stream,
+        )
         .await
         .unwrap();
     let transport: ClientTransport = Transport::new(stream);
@@ -154,7 +168,8 @@ async fn run_session(session: Session<'_>) -> Result<(), Error> {
     } = session;
 
     let ping_ticker_interval = Duration::from_secs(15);
-    let mut ping_ticker = { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
+    let mut ping_ticker =
+        { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
 
     let mut local_ping_counter = 1;
 
