@@ -20,6 +20,9 @@ use tracing::{debug, error, info};
 /// Time it takes before client giving up on connecting to the server.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Interval between reconnecting attempt.
+const RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
+
 type ClientTransport = Transport<ServerMessage, ClientMessage>;
 
 #[derive(Debug, Clone)]
@@ -62,9 +65,12 @@ async fn run_transport(args: TransportClient, event_tx: mpsc::Sender<InputEvent>
             retry_count += 1;
             debug!("retry count incremented to {}", retry_count);
 
-            let delay = Duration::from_secs(10);
-            info!("reconnecting in {} secs ({})", delay.as_secs(), retry_count);
-            sleep(delay).await;
+            info!(
+                "reconnecting in {} secs ({})",
+                RECONNECT_INTERVAL.as_secs(),
+                retry_count
+            );
+            sleep(RECONNECT_INTERVAL).await;
         }
     }
 }
