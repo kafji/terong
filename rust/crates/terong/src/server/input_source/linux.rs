@@ -37,7 +37,9 @@ struct Ungrabber(Device);
 
 impl Drop for Ungrabber {
     fn drop(&mut self) {
-        self.0.grab(GrabMode::Ungrab).expect("failed to ungrab device");
+        self.0
+            .grab(GrabMode::Ungrab)
+            .expect("failed to ungrab device");
     }
 }
 
@@ -85,7 +87,11 @@ where
 }
 
 fn set_consume_input(device: &mut Device, flag: bool) -> Result<(), Error> {
-    let mode = if flag { GrabMode::Grab } else { GrabMode::Ungrab };
+    let mode = if flag {
+        GrabMode::Grab
+    } else {
+        GrabMode::Ungrab
+    };
     device.grab(mode).map_err(Into::into)
 }
 
@@ -96,7 +102,7 @@ fn run(
     event_tx: mpsc::Sender<InputEvent>,
 ) -> Result<JoinHandle<()>, Error> {
     let handle = task::spawn(async move {
-        let controller = InputController::new(event_tx).unwrap();
+        let controller = InputController::new(event_tx, false).unwrap();
         let controller = Arc::new(Mutex::new(controller));
 
         let keyboard = keyboard_device
@@ -123,7 +129,11 @@ fn run(
     Ok(handle)
 }
 
-fn spawn_listener<F>(device: PathBuf, controller: Arc<Mutex<InputController>>, map: F) -> Result<JoinHandle<()>, Error>
+fn spawn_listener<F>(
+    device: PathBuf,
+    controller: Arc<Mutex<InputController>>,
+    map: F,
+) -> Result<JoinHandle<()>, Error>
 where
     F: FnMut(&LinuxInputEvent) -> Option<LocalInputEvent> + Send + 'static,
 {
@@ -134,14 +144,18 @@ where
     };
 
     let handle = task::spawn(async move {
-        read_input_source(&mut device, controller, map).await.unwrap();
+        read_input_source(&mut device, controller, map)
+            .await
+            .unwrap();
     });
 
     Ok(handle)
 }
 
 fn map_keyboard_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
-    let LinuxInputEvent { event_code, value, .. } = x;
+    let LinuxInputEvent {
+        event_code, value, ..
+    } = x;
     match event_code {
         EventCode::EV_KEY(ev_key) => {
             let btn = MouseButton::from_ev_key(*ev_key);
@@ -166,17 +180,23 @@ fn map_keyboard_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
 }
 
 fn map_mouse_event(x: &LinuxInputEvent) -> Option<LocalInputEvent> {
-    let LinuxInputEvent { event_code, value, .. } = x;
+    let LinuxInputEvent {
+        event_code, value, ..
+    } = x;
     match event_code {
         EventCode::EV_REL(ev_rel) => match ev_rel {
             EV_REL::REL_WHEEL => match value.cmp(&0) {
                 Ordering::Less => LocalInputEvent::MouseScroll {
-                    direction: MouseScrollDirection::Down { clicks: *value as _ },
+                    direction: MouseScrollDirection::Down {
+                        clicks: *value as _,
+                    },
                 }
                 .into(),
                 Ordering::Equal => None,
                 Ordering::Greater => LocalInputEvent::MouseScroll {
-                    direction: MouseScrollDirection::Up { clicks: *value as _ },
+                    direction: MouseScrollDirection::Up {
+                        clicks: *value as _,
+                    },
                 }
                 .into(),
             },
