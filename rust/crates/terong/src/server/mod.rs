@@ -12,7 +12,7 @@ use anyhow::{Context, Error};
 use tokio::{sync::mpsc, try_join};
 use tracing::info;
 
-async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
+async fn start_app(cfg: ServerConfig, should_log: bool) -> Result<(), Error> {
     info!(?cfg, "starting server app");
 
     let ServerConfig {
@@ -34,7 +34,7 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
     );
 
     #[cfg(target_os = "windows")]
-    let input_source = input_source::start(event_tx);
+    let input_source = input_source::start(event_tx, should_log);
 
     let server = {
         let tls_certs = read_certs(&tls_cert_path)
@@ -63,10 +63,10 @@ async fn start_app(cfg: ServerConfig) -> Result<(), Error> {
 }
 
 /// Run the server application.
-pub async fn run() {
+pub async fn run(should_log: bool) {
     init_tracing();
 
     let cfg = Config::get().await.server();
 
-    start_app(cfg).await.unwrap();
+    start_app(cfg, should_log).await.unwrap();
 }
