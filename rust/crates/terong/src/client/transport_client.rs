@@ -2,18 +2,18 @@ use crate::{
     tls::create_tls_connector,
     transport::{
         Certificate, PrivateKey, Transport,
-        protocol::{ClientMessage, InputEvent, Ping, Pong, ServerMessage},
+        protocol::{ClientMessage, HeartbeatTimers, InputEvent, Ping, ServerMessage},
     },
     typing::impl_from,
 };
-use anyhow::Error;
+use anyhow::{Context, Error};
 use std::{fmt, net::SocketAddr, time::Duration};
 use tokio::{
     net::TcpStream,
     select,
     sync::mpsc,
     task::{self, JoinHandle},
-    time::{Instant, interval_at, sleep},
+    time::sleep,
 };
 use tracing::{debug, error, info};
 
@@ -139,7 +139,6 @@ async fn connect(
     let session = Session {
         event_tx,
         transporter: transport,
-        state: Default::default(),
     };
     let result = run_session(session).await;
 
@@ -154,95 +153,47 @@ async fn connect(
 struct Session<'a> {
     event_tx: &'a mpsc::Sender<InputEvent>,
     transporter: ClientTransport,
-    state: SessionState,
-}
-
-#[derive(Clone, Copy, Default, Debug)]
-pub enum SessionState {
-    #[default]
-    Idle,
-    EventRelayed {
-        event: InputEvent,
-    },
 }
 
 async fn run_session(session: Session<'_>) -> Result<(), Error> {
     let Session {
         event_tx,
         transporter: mut transport,
-        mut state,
     } = session;
 
-    let ping_ticker_interval = Duration::from_secs(15);
-    let mut ping_ticker =
-        { interval_at(Instant::now() + ping_ticker_interval, ping_ticker_interval) };
-
-    let mut local_ping_counter = 1;
+    let mut timers = HeartbeatTimers::new();
 
     loop {
-        state = match state {
-            SessionState::Idle => {
-                select! { biased;
+        select! {
 
-                    _ = ping_ticker.tick() => {
-                        debug!("ping ticker ticks");
-
-                        if local_ping_counter % 2 == 1 {
-                            // odd, client send ping
-                            let msg = Ping { counter: local_ping_counter }.into();
-                            match transport.send_msg(msg).await {
-                                Ok(_) => {
-                                    debug!("ping sent successfully, incrementing local counter");
-                                    local_ping_counter += 1;
-                                    SessionState::Idle
-                                },
-                                Err(err) => {
-                                    error!(?err, "failed to send ping");
-                                    break;
-                                },
-                            }
-                        } else {
-                            // client has sent ping a tick before
-                            // but client has not receive pong from server
-                            info!("haven't heard pong from server for {} secs, terminating session", ping_ticker_interval.as_secs());
-                            break;
-                        }
-                    }
-
-                    Ok(msg) = transport.recv_msg() => {
-                        debug!("received message, {:?}", msg);
-
-                        let event = match msg {
-                            ServerMessage::Event(event) => Some(event),
-                            ServerMessage::Pong(Pong { counter })=> {
-                                if counter == local_ping_counter {
-                                    debug!("received pong, incrementing local counter, resetting ticker");
-                                    local_ping_counter += 1;
-                                    ping_ticker.reset();
-                                    None
-                                } else {
-                                    // received pong from server, but counter is mismatch
-                                    info!("terminating session, ping counter mismatch");
-                                    break;
-                                }
-                            },
-                        };
-
-                        match event {
-                            Some(event) => SessionState::EventRelayed { event },
-                            None => SessionState::Idle
-                        }
-                    }
-                }
+            // recv heartbeat deadline
+            _ = timers.recv_deadline() => {
+                info!("haven't heard any message from server for {} secs, terminating session", timers.timeout().as_secs());
+                break;
             }
 
-            SessionState::EventRelayed { event } => {
-                // propagate event to input sink
-                event_tx.send(event).await?;
-
-                SessionState::Idle
+            // send heartbeat deadline
+            _ = timers.send_deadline() => {
+                transport
+                    .send_msg(ClientMessage::Ping(Ping {}))
+                    .await
+                    .context("failed to send ping message")?;
+                // reset send heartbeat deadline after receiving any message
+                timers.reset_send_deadline();
             }
-        };
+
+            Ok(msg) = transport.recv_msg() => {
+                // reset recv heartbeat deadline after receiving any message
+                timers.reset_recv_deadline();
+                match msg {
+                    ServerMessage::Event(event) => {
+                        event_tx.send(event).await?;
+                    },
+                    ServerMessage::Ping(Ping {}) => {
+                    },
+                };
+            }
+        }
     }
 
     Ok(())

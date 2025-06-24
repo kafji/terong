@@ -23,10 +23,10 @@ impl_from!(ClientMessage, {
 pub enum ServerMessage {
     /// Propagated event from the server host machine.
     Event(InputEvent),
-    Pong(Pong),
+    Ping(Ping),
 }
 
 impl_from!(ServerMessage, {
      Self::Event => InputEvent,
-     Self::Pong => Pong,
+     Self::Ping => Ping,
 });
