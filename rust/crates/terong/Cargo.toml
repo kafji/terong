@@ -49,5 +49,5 @@ windows = { version = "0.59", features = [
 
 [dev-dependencies]
 criterion = { version = "0.6", features = ["async_tokio"] }
-rcgen = "0.13"
+rcgen = "0.14"
 tokio-test = "0.4"
