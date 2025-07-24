@@ -7,19 +7,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    reviewers:
-      - "kafji"
 
   - package-ecosystem: "cargo"
     directory: "/rust"
     schedule:
       interval: "weekly"
-    reviewers:
-      - "kafji"
 
   - package-ecosystem: "gomod"
     directory: "/go"
     schedule:
       interval: "weekly"
-    reviewers:
-      - "kafji"
