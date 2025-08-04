@@ -10,10 +10,6 @@ A [KVM switch software](https://en.wikipedia.org/wiki/KVM_switch).
 
 ## Installation
 
-### Requirements
-
-- Rust toolchain as described in https://rustup.rs/.
-
 ### Build
 
 - Clone repository.
