@@ -73,9 +73,9 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
             GetWindowThreadProcessId(window, Some(&mut pid));
             pid
         };
+
         if let Some(info) = get_process_info(pid) {
-            let cmd = info.cmd;
-            if cmd != "firefox.exe" {
+            if info.cmd != "firefox.exe" {
                 return;
             }
 
