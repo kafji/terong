@@ -7,7 +7,7 @@ require (
 	github.com/bytedance/sonic v1.13.3
 	github.com/fxamacker/cbor/v2 v2.8.0
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/sys v0.33.0
+	golang.org/x/sys v0.34.0
 )
 
 require (
