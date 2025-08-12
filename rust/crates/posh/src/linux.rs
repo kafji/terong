@@ -1,3 +1,3 @@
 pub fn run() {
-    panic!("noop");
+    unimplemented!("noop");
 }
