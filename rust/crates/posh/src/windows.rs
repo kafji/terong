@@ -90,7 +90,7 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
         match &app.command {
             Command::Center(center) => {
                 let title = get_window_title(window);
-                if title != center.title {
+                if !title.starts_with(&center.title) {
                     return;
                 }
 
