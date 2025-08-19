@@ -1,13 +1,14 @@
 mod process;
 
 use self::process::get_process_info;
+use crate::cli::{Cli, Command};
 use std::{ffi::c_void, sync::OnceLock};
 use windows::{
     Win32::{
         Foundation::{HWND, LPARAM, RECT},
         UI::WindowsAndMessaging::{
             EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-            SPI_GETWORKAREA, SWP_ASYNCWINDOWPOS, SWP_NOOWNERZORDER, SWP_NOZORDER,
+            SPI_GETWORKAREA, SWP_ASYNCWINDOWPOS, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
             SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos, SystemParametersInfoW,
         },
     },
@@ -27,6 +28,7 @@ enum HorizontalPosition {
 }
 
 struct App {
+    command: Command,
     screen_rect: RECT,
     horizontal_position: HorizontalPosition,
     constraint: Constraint,
@@ -35,6 +37,8 @@ struct App {
 static APP: OnceLock<App> = OnceLock::new();
 
 pub fn run() {
+    let cli: Cli = argh::from_env();
+
     unsafe {
         APP.get_or_init(|| {
             let screen_rect = {
@@ -49,6 +53,7 @@ pub fn run() {
                 rect
             };
             App {
+                command: cli.command,
                 screen_rect,
                 constraint: Constraint::Width({
                     let width = screen_rect.right - screen_rect.left;
@@ -60,6 +65,12 @@ pub fn run() {
 
         EnumWindows(Some(enum_windows_proc), LPARAM::default()).unwrap();
     }
+}
+
+fn get_window_title(window: HWND) -> String {
+    let mut buf = [0; 1024];
+    let len = unsafe { GetWindowTextW(window, &mut buf) };
+    String::from_utf16(&buf[..len as usize]).unwrap()
 }
 
 unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> BOOL {
@@ -74,54 +85,90 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
             pid
         };
 
-        if let Some(info) = get_process_info(pid) {
-            if info.cmd != "firefox.exe" {
-                return;
+        let app = APP.get().unwrap();
+
+        match &app.command {
+            Command::Center(center) => {
+                let title = get_window_title(window);
+                if title != center.title {
+                    return;
+                }
+
+                let mut rect = RECT::default();
+                GetWindowRect(window, &mut rect).unwrap();
+                if rect == RECT::default() {
+                    return;
+                }
+
+                let screen_width = app.screen_rect.right - app.screen_rect.left;
+                let screen_height = app.screen_rect.bottom - app.screen_rect.top;
+
+                let window_width = rect.right - rect.left;
+                let window_height = rect.bottom - rect.top;
+
+                let x = screen_width / 2 - window_width / 2;
+                let y = screen_height / 2 - window_height / 2;
+
+                SetWindowPos(
+                    window,
+                    None,
+                    x,
+                    y,
+                    0,
+                    0,
+                    SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_NOZORDER,
+                )
+                .unwrap();
             }
+            Command::Pip(_) => {
+                if let Some(info) = get_process_info(pid) {
+                    if info.cmd != "firefox.exe" {
+                        return;
+                    }
 
-            let title = {
-                let mut buf = [0; 1024];
-                let len = GetWindowTextW(window, &mut buf);
-                String::from_utf16(&buf[..len as usize]).unwrap()
-            };
-            if title != "Picture-in-Picture" {
-                return;
+                    let title = get_window_title(window);
+                    if title != "Picture-in-Picture" {
+                        return;
+                    }
+
+                    let mut rect = RECT::default();
+                    GetWindowRect(window, &mut rect).unwrap();
+                    if rect == RECT::default() {
+                        return;
+                    }
+
+                    let ratio = {
+                        let w = rect.right - rect.left;
+                        let h = rect.bottom - rect.top;
+                        w as f64 / h as f64
+                    };
+
+                    let (width, height) = match app.constraint {
+                        Constraint::Width(width) => {
+                            (width as _, (width as f64 * ratio).round() as _)
+                        }
+                        Constraint::Height(height) => {
+                            ((height as f64 * ratio).round() as _, height as _)
+                        }
+                    };
+
+                    let x_pos = match app.horizontal_position {
+                        HorizontalPosition::Left => 0,
+                        HorizontalPosition::Right => app.screen_rect.right - width,
+                    };
+
+                    SetWindowPos(
+                        window,
+                        None,
+                        x_pos,
+                        200,
+                        width,
+                        height,
+                        SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
+                    )
+                    .unwrap();
+                }
             }
-
-            let mut rect = RECT::default();
-            GetWindowRect(window, &mut rect).unwrap();
-            if rect == RECT::default() {
-                return;
-            }
-
-            let ratio = {
-                let w = rect.right - rect.left;
-                let h = rect.bottom - rect.top;
-                w as f64 / h as f64
-            };
-
-            let app = APP.get().unwrap();
-
-            let (width, height) = match app.constraint {
-                Constraint::Width(width) => (width as _, (width as f64 * ratio).round() as _),
-                Constraint::Height(height) => ((height as f64 * ratio).round() as _, height as _),
-            };
-
-            let x_pos = match app.horizontal_position {
-                HorizontalPosition::Left => 0,
-                HorizontalPosition::Right => app.screen_rect.right - width,
-            };
-
-            SetWindowPos(
-                window,
-                None,
-                x_pos,
-                800,
-                width,
-                height,
-                SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
-            )
-            .unwrap();
         }
     })();
     true.into()
