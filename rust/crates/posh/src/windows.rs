@@ -1,7 +1,7 @@
 mod process;
 
 use self::process::get_process_info;
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, HorizontalPosition};
 use std::{ffi::c_void, sync::OnceLock};
 use windows::{
     Win32::{
@@ -21,16 +21,9 @@ enum Constraint {
     Height(u32),
 }
 
-#[derive(Copy, Clone, Debug)]
-enum HorizontalPosition {
-    Left,
-    Right,
-}
-
 struct App {
     command: Command,
     screen_rect: RECT,
-    horizontal_position: HorizontalPosition,
     constraint: Constraint,
 }
 
@@ -59,7 +52,6 @@ pub fn run() {
                     let width = screen_rect.right - screen_rect.left;
                     (width / 5) as _
                 }),
-                horizontal_position: HorizontalPosition::Right,
             }
         });
 
@@ -85,12 +77,19 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
             pid
         };
 
+        let process_info = if let Some(info) = get_process_info(pid) {
+            info
+        } else {
+            return;
+        };
+
+        let title = get_window_title(window);
+
         let app = APP.get().unwrap();
 
         match &app.command {
-            Command::Center(center) => {
-                let title = get_window_title(window);
-                if !title.starts_with(&center.title) {
+            Command::Center(args) => {
+                if !title.starts_with(&args.title) {
                     return;
                 }
 
@@ -120,56 +119,52 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
                 )
                 .unwrap();
             }
-            Command::Pip(_) => {
-                if let Some(info) = get_process_info(pid) {
-                    if info.cmd != "firefox.exe" {
-                        return;
-                    }
-
-                    let title = get_window_title(window);
-                    if title != "Picture-in-Picture" {
-                        return;
-                    }
-
-                    let mut rect = RECT::default();
-                    GetWindowRect(window, &mut rect).unwrap();
-                    if rect == RECT::default() {
-                        return;
-                    }
-
-                    let ratio = {
-                        let w = rect.right - rect.left;
-                        let h = rect.bottom - rect.top;
-                        w as f64 / h as f64
-                    };
-
-                    let (width, height) = match app.constraint {
-                        Constraint::Width(width) => {
-                            (width as _, (width as f64 * ratio).round() as _)
-                        }
-                        Constraint::Height(height) => {
-                            ((height as f64 * ratio).round() as _, height as _)
-                        }
-                    };
-
-                    let x_pos = match app.horizontal_position {
-                        HorizontalPosition::Left => 0,
-                        HorizontalPosition::Right => app.screen_rect.right - width,
-                    };
-
-                    SetWindowPos(
-                        window,
-                        None,
-                        x_pos,
-                        200,
-                        width,
-                        height,
-                        SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
-                    )
-                    .unwrap();
+            Command::Pip(args) => {
+                if process_info.cmd != "firefox.exe" {
+                    return;
                 }
+
+                if title != "Picture-in-Picture" {
+                    return;
+                }
+
+                let mut rect = RECT::default();
+                GetWindowRect(window, &mut rect).unwrap();
+                if rect == RECT::default() {
+                    return;
+                }
+
+                let ratio = {
+                    let w = rect.right - rect.left;
+                    let h = rect.bottom - rect.top;
+                    w as f64 / h as f64
+                };
+
+                let (width, height) = match app.constraint {
+                    Constraint::Width(width) => (width as _, (width as f64 * ratio).round() as _),
+                    Constraint::Height(height) => {
+                        ((height as f64 * ratio).round() as _, height as _)
+                    }
+                };
+
+                let x_pos = match args.horizontal {
+                    HorizontalPosition::Left => 0,
+                    HorizontalPosition::Right => app.screen_rect.right - width,
+                };
+
+                SetWindowPos(
+                    window,
+                    None,
+                    x_pos,
+                    400,
+                    width,
+                    height,
+                    SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
+                )
+                .unwrap();
             }
         }
     })();
+
     true.into()
 }
