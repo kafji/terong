@@ -156,7 +156,7 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
                     window,
                     None,
                     x_pos,
-                    400,
+                    300,
                     width,
                     height,
                     SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
