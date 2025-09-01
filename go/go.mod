@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/bytedance/sonic v1.13.3
 	github.com/fxamacker/cbor/v2 v2.8.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	golang.org/x/sys v0.33.0
 )
 
