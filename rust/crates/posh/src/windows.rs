@@ -50,7 +50,7 @@ pub fn run() {
                 screen_rect,
                 constraint: Constraint::Width({
                     let width = screen_rect.right - screen_rect.left;
-                    (width / 5) as _
+                    (width / 3) as _
                 }),
             }
         });
@@ -156,7 +156,7 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
                     window,
                     None,
                     x_pos,
-                    300,
+                    200,
                     width,
                     height,
                     SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
