@@ -4,15 +4,15 @@ use self::process::get_process_info;
 use crate::cli::{Cli, Command, HorizontalPosition};
 use std::{ffi::c_void, sync::OnceLock};
 use windows::{
+    core::BOOL,
     Win32::{
         Foundation::{HWND, LPARAM, RECT},
         UI::WindowsAndMessaging::{
             EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-            SPI_GETWORKAREA, SWP_ASYNCWINDOWPOS, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos, SystemParametersInfoW,
+            SetWindowPos, SystemParametersInfoW, SPI_GETWORKAREA, SWP_ASYNCWINDOWPOS,
+            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
         },
     },
-    core::BOOL,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -50,7 +50,7 @@ pub fn run() {
                 screen_rect,
                 constraint: Constraint::Width({
                     let width = screen_rect.right - screen_rect.left;
-                    (width / 3) as _
+                    (width / 4) as _
                 }),
             }
         });
