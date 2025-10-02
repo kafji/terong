@@ -4,15 +4,15 @@ use self::process::get_process_info;
 use crate::cli::{Cli, Command, HorizontalPosition};
 use std::{ffi::c_void, sync::OnceLock};
 use windows::{
-    core::BOOL,
     Win32::{
         Foundation::{HWND, LPARAM, RECT},
         UI::WindowsAndMessaging::{
             EnumWindows, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-            SetWindowPos, SystemParametersInfoW, SPI_GETWORKAREA, SWP_ASYNCWINDOWPOS,
-            SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+            SPI_GETWORKAREA, SWP_ASYNCWINDOWPOS, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowPos, SystemParametersInfoW,
         },
     },
+    core::BOOL,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -156,7 +156,7 @@ unsafe extern "system" fn enum_windows_proc(window: HWND, _l_param: LPARAM) -> B
                     window,
                     None,
                     x_pos,
-                    200,
+                    180,
                     width,
                     height,
                     SWP_ASYNCWINDOWPOS | SWP_NOOWNERZORDER | SWP_NOZORDER,
