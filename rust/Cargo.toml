@@ -6,5 +6,5 @@ resolver = "3"
 edition = "2024"
 
 [workspace.dependencies]
-tokio = "~1.47"
+tokio = "~1.48"
 windows = "0.61"
